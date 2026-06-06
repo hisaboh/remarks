@@ -1,7 +1,7 @@
 /* Common CSS use by both light and dark themes */
 :root {
   --titleBarHeight: 32px;
-  --editorAreaWidth: 750px;
+  --editorAreaWidth: calc(100px + 80%);
 
   /*editor*/
   /*Theme color cluster*/
