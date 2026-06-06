@@ -59,7 +59,12 @@ export default function loadImageAsync(imageInfo, attrs, className, imageClass) 
         if (attrs.title) pdfImg.setAttribute('title', attrs.title)
         if (imageClass) pdfImg.classList.add(imageClass)
         const imageText = document.querySelector(`#${id}`)
-        if (imageText) addImageToContainer(imageText, pdfImg, className)
+        if (imageText) {
+          // Make the container block-level so max-width: 100% on the img has
+          // a definite containing-block width (not shrink-to-fit inline-block).
+          imageText.classList.add('ag-pdf-figure')
+          addImageToContainer(imageText, pdfImg, className)
+        }
         this.loadImageMap.set(src, {
           id, isSuccess: true, img: pdfImg, width, height,
           dispMsec, touchMsec, domsrc: dataUrl, addedToImageContainer: !!imageText

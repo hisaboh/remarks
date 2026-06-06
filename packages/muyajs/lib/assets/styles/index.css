@@ -358,9 +358,8 @@ span.ag-math > .ag-math-render.ag-math-error {
   box-shadow: none;
   background: transparent;
   user-select: auto;
-  /* In inline display mode the base rule's max-width + overflow-x:auto are
-     intended for the absolute-positioned popup, not needed here. */
-  max-width: none;
+  /* Remove the scrollbar from the base rule while keeping max-width so the
+     element's layout footprint stays bounded and doesn't widen the document. */
   overflow: visible;
 }
 
@@ -972,6 +971,24 @@ span.ag-warn.ag-emoji-marked-text {
 
 .ag-inline-image.ag-image-success {
   background: transparent;
+}
+
+/* PDF pages are block-level figures; make the container a block so that
+   max-width: 100% on the <img> has a definite reference width (avoids
+   the shrink-to-fit circular-dependency that would fix the document width). */
+.ag-inline-image.ag-pdf-figure {
+  display: block;
+  max-width: 100%;
+}
+
+.ag-inline-image.ag-pdf-figure .ag-image-container {
+  display: block;
+  width: 100%;
+}
+
+.ag-inline-image.ag-pdf-figure img {
+  width: 100%;
+  height: auto;
 }
 
 .ag-inline-image span.ag-image-icon-success,
