@@ -298,6 +298,18 @@ export const getImageInfo = (src, baseUrl = window.DIRNAME) => {
     }
   }
 
+  // Pandoc-style figure reference using a document format (e.g. PDF).
+  // The browser cannot render these as <img>, but resolving the path here
+  // causes the renderer to show AG_IMAGE_FAIL ("Load image failed") instead
+  // of AG_EMPTY_IMAGE ("Click to add an image"), making the reference visible.
+  if (/\.pdf(?=\?|$)/i.test(src) && baseUrl) {
+    const isAbsoluteLocal = /^(?:\/|\\\\|[a-zA-Z]:\\|[a-zA-Z]:\/).+/.test(src)
+    return {
+      isUnknownType: false,
+      src: 'file://' + (isAbsoluteLocal ? src : path.resolve(baseUrl, src))
+    }
+  }
+
   // Url type is unknown
   return {
     isUnknownType: false,

@@ -30,6 +30,7 @@
     "mermaid": "^11.15.0",
     "pako": "^2.1.0",
     "pathe": "^2.0.3",
+    "pdfjs-dist": "^6.0.227",
     "prismjs": "^1.30.0",
     "snabbdom": "^3.6.3",
     "snabbdom-to-html": "^7.1.0",

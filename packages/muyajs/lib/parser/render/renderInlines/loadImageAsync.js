@@ -1,6 +1,7 @@
 import { getUniqueId } from '../../../utils'
 import { insertAfter, operateClassName } from '../../../utils/domManipulate'
 import { CLASS_OR_ID } from '../../../config'
+import { loadPdfPage } from './loadPdfPage'
 
 const addImageToContainer = (imageText, img, className) => {
   if (imageText.classList.contains('ag-inline-image')) {
@@ -46,10 +47,36 @@ export default function loadImageAsync(imageInfo, attrs, className, imageClass) 
   if (reload) {
     let addedToImageContainer = false
     id = getUniqueId()
+    const dispMsec = Date.now()
+    const touchMsec = dispMsec
+
+    // PDF files cannot be rendered by <img>; use PDF.js to rasterise page 1.
+    if (/\.pdf(?:\?|$)/i.test(src)) {
+      loadPdfPage(src).then(({ dataUrl, width, height }) => {
+        const pdfImg = document.createElement('img')
+        pdfImg.src = dataUrl
+        if (attrs.alt) pdfImg.alt = attrs.alt.replace(/[`*{}[\]()#+\-.!_>~:|<>$]/g, '')
+        if (attrs.title) pdfImg.setAttribute('title', attrs.title)
+        if (imageClass) pdfImg.classList.add(imageClass)
+        const imageText = document.querySelector(`#${id}`)
+        if (imageText) addImageToContainer(imageText, pdfImg, className)
+        this.loadImageMap.set(src, {
+          id, isSuccess: true, img: pdfImg, width, height,
+          dispMsec, touchMsec, domsrc: dataUrl, addedToImageContainer: !!imageText
+        })
+      }).catch(() => {
+        const imageText = document.querySelector(`#${id}`)
+        if (imageText) {
+          operateClassName(imageText, 'remove', CLASS_OR_ID.AG_IMAGE_LOADING)
+          operateClassName(imageText, 'add', CLASS_OR_ID.AG_IMAGE_FAIL)
+        }
+        this.loadImageMap.set(src, { id, isSuccess: false, addedToImageContainer: false })
+      })
+      this.loadImageMap.set(src, { id, isSuccess: undefined, addedToImageContainer: false })
+      return { id, isSuccess: undefined, domsrc: undefined }
+    }
 
     const img = document.createElement('img')
-    let dispMsec = Date.now()
-    let touchMsec = dispMsec
     if (/^file:\/\//.test(src)) {
       domsrc = src + '?msec=' + dispMsec
     } else {
