@@ -1,0 +1,43 @@
+services:
+  # Full Linux build: pnpm install → build:linux → output lands in ./dist/
+  build:
+    build:
+      context: ./docker
+    volumes:
+      # Source tree (read-write so dist/ and out/ can be written back to host)
+      - .:/workspace
+      # Isolate every node_modules tree so native modules are always compiled
+      # for Linux, never inadvertently shared with a macOS host tree.
+      - nm_root:/workspace/node_modules
+      - nm_desktop:/workspace/packages/desktop/node_modules
+      - nm_muya:/workspace/packages/muya/node_modules
+      - nm_muyajs:/workspace/packages/muyajs/node_modules
+      - nm_website:/workspace/packages/website/node_modules
+      - nm_muya_examples:/workspace/packages/muya/examples/node_modules
+      - nm_muya_e2e:/workspace/packages/muya/e2e/node_modules
+      # Persist pnpm content-addressable store and Electron binary across runs
+      - pnpm_store:/pnpm/store
+      - electron_cache:/root/.cache/electron
+    environment:
+      - electron_config_cache=/root/.cache/electron
+    command: sh -c "pnpm install && pnpm run build:linux"
+
+  # Interactive shell with the same environment — useful for one-off commands
+  # Usage: docker compose run --rm shell
+  shell:
+    extends:
+      service: build
+    command: bash
+    stdin_open: true
+    tty: true
+
+volumes:
+  nm_root:
+  nm_desktop:
+  nm_muya:
+  nm_muyajs:
+  nm_website:
+  nm_muya_examples:
+  nm_muya_e2e:
+  pnpm_store:
+  electron_cache:
