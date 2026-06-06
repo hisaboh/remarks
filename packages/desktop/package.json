@@ -105,11 +105,10 @@
     "vega-embed": "^7.1.0",
     "vue-i18n": "^11.4.2",
     "vue-router": "^4.6.4",
-    "webfontloader": "^1.6.28"
-  },
-  "optionalDependencies": {
+    "webfontloader": "^1.6.28",
     "native-keymap": "^3.3.9"
   },
+  "optionalDependencies": {},
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
     "@playwright/test": "^1.60.0",

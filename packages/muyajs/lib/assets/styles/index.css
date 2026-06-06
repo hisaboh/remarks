@@ -351,13 +351,21 @@ span.ag-math > .ag-math-render.ag-math-error {
 }
 .ag-hide.ag-ruby > .ag-ruby-render,
 .ag-hide.ag-math > .ag-math-render {
-  padding: 0 2px; /* Tiny padding to prevent rounding errors/small rendering issues from triggering a scroll bar */
+  padding: 0 2px;
   top: 0;
   position: relative;
   border: none;
   box-shadow: none;
   background: transparent;
   user-select: auto;
+  /* In inline display mode the base rule's max-width + overflow-x:auto are
+     intended for the absolute-positioned popup, not needed here. */
+  max-width: none;
+  overflow: visible;
+}
+
+.ag-hide.ag-math > .ag-math-render .katex {
+  overflow: visible;
 }
 
 .ag-ruby:not(.ag-hide) > .ag-ruby-render,
