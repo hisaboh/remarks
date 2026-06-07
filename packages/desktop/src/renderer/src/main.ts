@@ -11,13 +11,16 @@
 // `window.electron` at import time see a populated surface, matching Electron's
 // preload ordering.
 
-import { isTauri, initPlatform } from './platform'
+import { isTauri, initPlatform, emitDefaultBootstrap } from './platform'
 
 const start = async (): Promise<void> => {
   if (isTauri()) {
     await initPlatform()
   }
   await import('./app')
+  if (isTauri()) {
+    emitDefaultBootstrap()
+  }
 }
 
-void start()
+start().catch((err) => console.error('renderer boot failed:', err))

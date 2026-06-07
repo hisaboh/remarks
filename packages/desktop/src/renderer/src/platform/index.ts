@@ -9,6 +9,7 @@
 // be awaited before the Vue app (and muya) load — see main.ts.
 
 import pathe from 'pathe'
+import { emit } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import type { BootInfo } from '@shared/types/ipc'
@@ -180,6 +181,24 @@ const ensureUrlArgs = (bootInfo: BootInfo): void => {
   params.set('theme', 'light')
   params.set('tbs', 'custom')
   history.replaceState(null, '', `?${params.toString()}${window.location.hash}`)
+}
+
+// TEMP (Phase 4): the real `mt::bootstrap-editor` handshake — initial tabs,
+// layout, line ending from preferences, opened files — belongs to the
+// multi-window bootstrap flow the main process drives. This emits a single
+// default config (one blank tab) after the editor store has registered its
+// listener, so the editor initializes and WebKit rendering can be validated now.
+export const emitDefaultBootstrap = (): void => {
+  setTimeout(() => {
+    void emit('mt::bootstrap-editor', {
+      addBlankTab: true,
+      markdownList: [],
+      lineEnding: 'lf',
+      sideBarVisibility: false,
+      tabBarVisibility: false,
+      sourceCodeModeEnabled: false
+    })
+  }, 1200)
 }
 
 // ---- install ----------------------------------------------------------------
