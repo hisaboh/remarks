@@ -371,6 +371,12 @@ span.ag-math > .ag-math-render.ag-math-error {
 .ag-math:not(.ag-hide) > .ag-math-render {
   z-index: 100;
   box-shadow: var(--floatShadow);
+  /* These floating previews are absolutely positioned against the small inline
+     .ag-ruby/.ag-math span, so the base rule's percentage-based max-width
+     resolves against that span's shrink-to-fit width instead of the editor
+     area, leaving barely any room and forcing a horizontal scrollbar. Use the
+     viewport instead, which is independent of the containing block's size. */
+  max-width: calc(100vw - 100px);
 }
 
 .ag-gray.ag-ruby > .ag-ruby-render::before,
