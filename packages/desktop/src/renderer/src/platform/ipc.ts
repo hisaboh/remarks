@@ -44,7 +44,8 @@ const INVOKE_MAP: Record<string, CmdSpec> = {
   'mt::clipboard::read-text': { command: 'clipboard_read_text' },
   'mt::clipboard::guess-file-path': { command: 'clipboard_guess_file_path' },
   'mt::paths::is-image': { command: 'paths_is_image', params: ['path'] },
-  'mt::ask-for-image-path': { command: 'data_center_ask_image_path' }
+  'mt::ask-for-image-path': { command: 'data_center_ask_image_path' },
+  'mt::editor::bootstrap-config': { command: 'editor_bootstrap_config' }
 }
 
 // renderer → main, fire-and-forget channels that map to a command.
@@ -150,6 +151,15 @@ type Listener = (event: unknown, ...args: unknown[]) => void
 // Track active unlisten fns per channel so removeAllListeners() can dispose them.
 const registry = new Map<string, Set<UnlistenFn>>()
 
+// One-shot hook fired the first time the editor's `mt::bootstrap-editor`
+// listener attaches — lets the platform drive the bootstrap handshake the
+// moment the consumer is ready, instead of guessing with a timer.
+let bootstrapTrigger: (() => void) | null = null
+let bootstrapFired = false
+export const setBootstrapTrigger = (fn: () => void): void => {
+  bootstrapTrigger = fn
+}
+
 const subscribe = (channel: string, listener: Listener, once: boolean): (() => void) => {
   let unlisten: UnlistenFn | null = null
   let disposed = false
@@ -179,6 +189,13 @@ const subscribe = (channel: string, listener: Listener, once: boolean): (() => v
     unlisten = fn
     if (!registry.has(channel)) registry.set(channel, new Set())
     registry.get(channel)!.add(fn)
+
+    // The editor store has now attached its bootstrap listener — kick off the
+    // backend-driven handshake exactly once.
+    if (channel === 'mt::bootstrap-editor' && bootstrapTrigger && !bootstrapFired) {
+      bootstrapFired = true
+      bootstrapTrigger()
+    }
   })
 
   return dispose

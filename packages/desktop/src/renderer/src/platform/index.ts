@@ -13,7 +13,7 @@ import { emit } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import type { BootInfo } from '@shared/types/ipc'
-import { ipcRenderer, invoke, send, setCachedBootInfo } from './ipc'
+import { ipcRenderer, invoke, send, setCachedBootInfo, setBootstrapTrigger } from './ipc'
 
 export const isTauri = (): boolean => '__TAURI_INTERNALS__' in window
 
@@ -183,22 +183,18 @@ const ensureUrlArgs = (bootInfo: BootInfo): void => {
   history.replaceState(null, '', `?${params.toString()}${window.location.hash}`)
 }
 
-// TEMP (Phase 4): the real `mt::bootstrap-editor` handshake — initial tabs,
-// layout, line ending from preferences, opened files — belongs to the
-// multi-window bootstrap flow the main process drives. This emits a single
-// default config (one blank tab) after the editor store has registered its
-// listener, so the editor initializes and WebKit rendering can be validated now.
-export const emitDefaultBootstrap = (): void => {
-  setTimeout(() => {
-    void emit('mt::bootstrap-editor', {
-      addBlankTab: true,
-      markdownList: [],
-      lineEnding: 'lf',
-      sideBarVisibility: false,
-      tabBarVisibility: false,
-      sourceCodeModeEnabled: false
-    })
-  }, 1200)
+// Backend-driven `mt::bootstrap-editor` handshake. Registered as the one-shot
+// trigger fired when the editor store attaches its listener (see ipc.ts): we
+// fetch the config the Electron main process used to build (from preferences)
+// and emit the event the editor store waits on.
+// TODO(phase-4): pass opened files (CLI args / restored session) into
+// markdownList, and split per-window config once multi-window lands.
+const registerBootstrapHandshake = (): void => {
+  setBootstrapTrigger(() => {
+    void invoke('mt::editor::bootstrap-config')
+      .then((config) => emit('mt::bootstrap-editor', config))
+      .catch((err) => console.error('[platform] bootstrap config failed:', err))
+  })
 }
 
 // ---- install ----------------------------------------------------------------
@@ -247,4 +243,8 @@ export const initPlatform = async (): Promise<void> => {
     nextTick: (fn: (...args: unknown[]) => void, ...args: unknown[]) =>
       Promise.resolve().then(() => fn(...args))
   }
+
+  // Arm the bootstrap handshake before the editor store (loaded with the Vue
+  // app) attaches its listener.
+  registerBootstrapHandshake()
 }

@@ -43,6 +43,8 @@ pub fn run() {
             commands::fs::fs_trash_item,
             // encoding (Phase 3: ced/iconv replacement)
             commands::encoding::fs_read_text_auto,
+            // editor bootstrap (Phase 4)
+            commands::editor::editor_bootstrap_config,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,

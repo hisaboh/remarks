@@ -16,6 +16,7 @@
 pub mod boot_info;
 pub mod clipboard;
 pub mod data_center;
+pub mod editor;
 pub mod encoding;
 pub mod fs;
 pub mod paths;
