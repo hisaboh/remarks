@@ -49,7 +49,9 @@ const INVOKE_MAP: Record<string, CmdSpec> = {
   'mt::paths::is-image': { command: 'paths_is_image', params: ['path'] },
   'mt::ask-for-image-path': { command: 'data_center_ask_image_path' },
   'mt::editor::bootstrap-config': { command: 'editor_bootstrap_config' },
-  'mt::window::init-args': { command: 'window_init_args' }
+  'mt::window::init-args': { command: 'window_init_args' },
+  'mt::menu::popup': { command: 'menu_popup', params: ['template', 'position'] },
+  'mt::menu::popup-application': { command: 'menu_popup_application' }
 }
 
 // renderer → main, fire-and-forget channels that map to a command.

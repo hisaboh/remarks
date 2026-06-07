@@ -133,9 +133,8 @@ const windowControlAPI: ElectronWindowControlAPI = {
   toggleFullScreen: () => send('mt::win::toggle-fullscreen'),
   isMaximized: () => getCurrentWindow().isMaximized(),
   isFullScreen: () => getCurrentWindow().isFullscreen(),
-  // TODO(phase-4): native context-menu popups.
-  popupMenu: () => console.debug('[platform] popupMenu not implemented'),
-  popupApplicationMenu: () => console.debug('[platform] popupApplicationMenu not implemented')
+  popupMenu: (template, position) => void invoke('mt::menu::popup', template, position),
+  popupApplicationMenu: (position) => void invoke('mt::menu::popup-application', position)
 }
 
 const noopDisposer = (): void => {}

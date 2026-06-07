@@ -15,6 +15,7 @@
 
 pub mod boot_info;
 pub mod clipboard;
+pub mod context_menu;
 pub mod data_center;
 pub mod editor;
 pub mod encoding;

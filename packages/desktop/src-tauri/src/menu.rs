@@ -119,6 +119,15 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         crate::commands::window::open_settings(app);
         return;
     }
+    // Context-menu popup items are routed back as mt::menu::click, not as
+    // application commands.
+    if app
+        .state::<crate::commands::context_menu::PopupMenuState>()
+        .is_popup_id(id)
+    {
+        crate::commands::context_menu::route_popup_click(app, id);
+        return;
+    }
     let focused = app
         .webview_windows()
         .into_values()

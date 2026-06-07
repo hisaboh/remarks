@@ -29,6 +29,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::default().build())
         .plugin(tauri_plugin_process::init())
         .manage(commands::window::WindowRegistry::default())
+        .manage(commands::context_menu::PopupMenuState::default())
         .on_menu_event(|app, event| {
             menu::handle_menu_event(app, event.id().as_ref());
         })
@@ -78,6 +79,9 @@ pub fn run() {
             commands::window::window_request_close,
             commands::window::window_close,
             commands::window::window_close_confirm,
+            // context menu (Phase 4)
+            commands::context_menu::menu_popup,
+            commands::context_menu::menu_popup_application,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,
