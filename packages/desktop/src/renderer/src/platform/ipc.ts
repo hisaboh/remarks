@@ -31,6 +31,9 @@ const INVOKE_MAP: Record<string, CmdSpec> = {
   'mt::fs::stat': { command: 'fs_stat', params: ['path'] },
   'mt::fs::write-file': { command: 'fs_write_file', params: ['path', 'data'] },
   'mt::fs::read-file': { command: 'fs_read_file', params: ['path', 'encoding'] },
+  // Phase 3: read + auto-detect encoding (chardetng) + decode to UTF-8.
+  // Consumed by the Phase 4 file-open flow.
+  'mt::fs::read-text-auto': { command: 'fs_read_text_auto', params: ['path', 'autoGuess'] },
   'mt::fs::path-exists': { command: 'fs_path_exists', params: ['path'] },
   'mt::fs::unlink': { command: 'fs_unlink', params: ['path'] },
   'mt::fs::readdir': { command: 'fs_readdir', params: ['path'] },

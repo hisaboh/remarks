@@ -41,6 +41,8 @@ pub fn run() {
             commands::fs::fs_stat,
             commands::fs::fs_is_executable,
             commands::fs::fs_trash_item,
+            // encoding (Phase 3: ced/iconv replacement)
+            commands::encoding::fs_read_text_auto,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,

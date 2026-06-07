@@ -166,13 +166,21 @@ pub fn fs_write_file(path: String, data: WriteData) -> Result<(), String> {
 pub fn fs_read_file(path: String, encoding: Option<String>) -> Result<ReadResult, String> {
     let bytes = std::fs::read(&path).map_err(to_err)?;
     match encoding.as_deref() {
-        // Electron returns a string only when an encoding is supplied; the
-        // renderer overwhelmingly uses utf8. Any other encoding falls back to
-        // raw bytes for the shim to decode.
+        // No encoding → return raw bytes (Buffer-equivalent), as Electron does.
+        None => Ok(ReadResult::Bytes(bytes)),
         Some("utf8") | Some("utf-8") => {
             String::from_utf8(bytes).map(ReadResult::Text).map_err(to_err)
         }
-        _ => Ok(ReadResult::Bytes(bytes)),
+        // Any other named encoding (shift_jis, euc-kr, windows-1252, …) is
+        // decoded to a UTF-8 string via encoding_rs (Phase 3: iconv replacement).
+        // Unknown labels fall back to raw bytes for the shim to handle.
+        Some(label) => match encoding_rs::Encoding::for_label(label.as_bytes()) {
+            Some(enc) => {
+                let (text, _enc_used, _had_errors) = enc.decode(&bytes);
+                Ok(ReadResult::Text(text.into_owned()))
+            }
+            None => Ok(ReadResult::Bytes(bytes)),
+        },
     }
 }
 
