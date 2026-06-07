@@ -11,6 +11,17 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::default().build())
         .plugin(tauri_plugin_process::init())
+        .setup(|app| {
+            // Seed/reconcile persisted settings before the renderer asks for them.
+            let handle = app.handle();
+            if let Err(e) = commands::preferences::init(handle) {
+                log::error!("preferences init failed: {e}");
+            }
+            if let Err(e) = commands::data_center::init(handle) {
+                log::error!("data center init failed: {e}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // boot info
             commands::boot_info::boot_info,
@@ -41,6 +52,16 @@ pub fn run() {
             // paths
             commands::paths::paths_is_image,
             commands::paths::paths_is_same,
+            // preferences
+            commands::preferences::preferences_get_all,
+            commands::preferences::preferences_set_items,
+            commands::preferences::preferences_toggle_autosave,
+            // data center
+            commands::data_center::data_center_get_all,
+            commands::data_center::data_center_set_items,
+            commands::data_center::data_center_set_image_folder_path,
+            commands::data_center::data_center_modify_image_folder_path,
+            commands::data_center::data_center_ask_image_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running marktext")

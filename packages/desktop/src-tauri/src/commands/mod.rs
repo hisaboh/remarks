@@ -15,6 +15,8 @@
 
 pub mod boot_info;
 pub mod clipboard;
+pub mod data_center;
 pub mod fs;
 pub mod paths;
+pub mod preferences;
 pub mod shell;
