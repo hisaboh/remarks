@@ -117,6 +117,17 @@ pub fn window_create(
     kind: String,
     category: Option<String>,
 ) -> Result<(), String> {
+    create_or_focus(&app, &kind, category)
+}
+
+/// Open (or focus) the settings window — used by the native menu.
+pub fn open_settings(app: &AppHandle) {
+    if let Err(e) = create_or_focus(app, "settings", None) {
+        log::error!("failed to open settings window: {e}");
+    }
+}
+
+fn create_or_focus(app: &AppHandle, kind: &str, category: Option<String>) -> Result<(), String> {
     // Settings is a singleton — focus the existing one.
     if kind == "settings" {
         if let Some(existing) = app.get_webview_window("settings") {
@@ -142,7 +153,7 @@ pub fn window_create(
         .unwrap()
         .insert(label.clone(), WinArgs { window_id: id, win_type });
 
-    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
+    WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(title)
         .inner_size(width, height)
         .min_inner_size(600.0, 400.0)

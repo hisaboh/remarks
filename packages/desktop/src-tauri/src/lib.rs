@@ -1,4 +1,5 @@
 mod commands;
+mod menu;
 
 use tauri::{Emitter, Manager, WindowEvent};
 
@@ -28,6 +29,9 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::default().build())
         .plugin(tauri_plugin_process::init())
         .manage(commands::window::WindowRegistry::default())
+        .on_menu_event(|app, event| {
+            menu::handle_menu_event(app, event.id().as_ref());
+        })
         .setup(|app| {
             // Seed/reconcile persisted settings before the renderer asks for them.
             let handle = app.handle();
@@ -37,6 +41,7 @@ pub fn run() {
             if let Err(e) = commands::data_center::init(handle) {
                 log::error!("data center init failed: {e}");
             }
+            app.set_menu(menu::build_menu(handle)?)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
