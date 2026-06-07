@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.json",
+  "identifier": "app.marktext.marktext",
+  "productName": "marktext",
+  "version": "0.20.0-dev",
+  "build": {
+    "frontendDist": "../out/renderer",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm build:renderer",
+    "beforeDevCommand": "pnpm dev:renderer"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "MarkText",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 600,
+        "minHeight": 400,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
