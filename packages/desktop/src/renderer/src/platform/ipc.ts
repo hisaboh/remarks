@@ -163,6 +163,10 @@ export const send = (channel: string, ...args: unknown[]): void => {
     void tauriInvoke('data_center_get_all').then((data) => emit('mt::user-preference', data))
     return
   }
+  if (channel === 'mt::request-keybindings') {
+    keybindingsResponder?.()
+    return
+  }
   const spec = SEND_MAP[channel]
   if (!spec) {
     console.debug(`[platform] unhandled send channel (no-op): ${channel}`)
@@ -187,6 +191,13 @@ let bootstrapTrigger: (() => void) | null = null
 let bootstrapFired = false
 export const setBootstrapTrigger = (fn: () => void): void => {
   bootstrapTrigger = fn
+}
+
+// Responder for `mt::request-keybindings` — the keybinding module emits the
+// `mt::keybindings-response` the renderer expects (handled locally; no main).
+let keybindingsResponder: (() => void) | null = null
+export const setKeybindingsResponder = (fn: () => void): void => {
+  keybindingsResponder = fn
 }
 
 const subscribe = (channel: string, listener: Listener, once: boolean): (() => void) => {

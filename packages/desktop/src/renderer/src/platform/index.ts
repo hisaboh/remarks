@@ -13,7 +13,15 @@ import { emitTo } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import type { BootInfo } from '@shared/types/ipc'
-import { ipcRenderer, invoke, send, setCachedBootInfo, setBootstrapTrigger } from './ipc'
+import {
+  ipcRenderer,
+  invoke,
+  send,
+  setCachedBootInfo,
+  setBootstrapTrigger,
+  setKeybindingsResponder
+} from './ipc'
+import { installKeybindings, getKeybindingMap } from '../keybinding'
 
 export const isTauri = (): boolean => '__TAURI_INTERNALS__' in window
 
@@ -244,4 +252,11 @@ export const initPlatform = async (): Promise<void> => {
   // Arm the bootstrap handshake before the editor store (loaded with the Vue
   // app) attaches its listener.
   registerBootstrapHandshake()
+
+  // Keyboard shortcuts: install the global dispatcher and answer the renderer's
+  // mt::request-keybindings with the platform default map (for palette display).
+  installKeybindings()
+  setKeybindingsResponder(() => {
+    void emitTo(getCurrentWindow().label, 'mt::keybindings-response', getKeybindingMap())
+  })
 }
