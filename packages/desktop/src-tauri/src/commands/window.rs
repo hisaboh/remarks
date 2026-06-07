@@ -10,12 +10,13 @@
 //! URL base, so instead each window asks `window_init_args` for its args (keyed
 //! by window label) and the renderer applies them via history.replaceState.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use serde_json::Value;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_store::StoreExt;
 
 use crate::commands::preferences::PREFERENCES_FILE;
@@ -31,6 +32,20 @@ struct WinArgs {
 #[derive(Default)]
 pub struct WindowRegistry {
     args: Mutex<HashMap<String, WinArgs>>,
+    /// Labels confirmed to close — the CloseRequested handler lets these through
+    /// instead of re-running the unsaved-changes prompt.
+    closing: Mutex<HashSet<String>>,
+}
+
+impl WindowRegistry {
+    pub fn mark_closing(&self, label: &str) {
+        self.closing.lock().unwrap().insert(label.to_string());
+    }
+
+    /// Returns true (and clears the flag) if `label` was marked for closing.
+    pub fn take_closing(&self, label: &str) -> bool {
+        self.closing.lock().unwrap().remove(label)
+    }
 }
 
 // Main window is window id 1; runtime windows start at 2.
@@ -133,5 +148,58 @@ pub fn window_create(
         .min_inner_size(600.0, 400.0)
         .build()
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ---- close flow -------------------------------------------------------------
+//
+// Window close (X button or the Close-Window command) is intercepted in
+// lib.rs's CloseRequested handler, which emits `mt::ask-for-close`. The
+// renderer replies with `mt::close-window` (nothing unsaved) or
+// `mt::close-window-confirm` (unsaved files → confirm dialog).
+
+/// Start the close flow for the current window (Close-Window command).
+#[tauri::command]
+pub fn window_request_close(window: WebviewWindow) -> Result<(), String> {
+    window
+        .emit_to(window.label(), "mt::ask-for-close", ())
+        .map_err(|e| e.to_string())
+}
+
+/// Renderer confirmed there's nothing to save — close for real.
+#[tauri::command]
+pub fn window_close(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    app.state::<WindowRegistry>().mark_closing(window.label());
+    window.close().map_err(|e| e.to_string())
+}
+
+/// Renderer reported unsaved files — confirm before discarding.
+///
+/// TODO(phase-4): tauri-plugin-dialog has no 3-button dialog, so this is a
+/// 2-button discard/cancel prompt. A proper Save / Don't Save / Cancel flow
+/// (saving each unsaved file, prompting a path for untitled ones) needs a
+/// custom in-renderer dialog or a native muda menu.
+#[tauri::command]
+pub fn window_close_confirm(
+    app: AppHandle,
+    window: WebviewWindow,
+    unsaved_files: Value,
+) -> Result<(), String> {
+    let count = unsaved_files.as_array().map(|a| a.len()).unwrap_or(0);
+    let confirmed = app
+        .dialog()
+        .message(format!(
+            "You have {count} file(s) with unsaved changes. Close without saving?"
+        ))
+        .title("Unsaved Changes")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Close without saving".into(),
+            "Cancel".into(),
+        ))
+        .blocking_show();
+    if confirmed {
+        app.state::<WindowRegistry>().mark_closing(window.label());
+        window.close().map_err(|e| e.to_string())?;
+    }
     Ok(())
 }

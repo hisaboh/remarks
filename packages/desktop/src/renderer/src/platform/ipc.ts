@@ -84,7 +84,11 @@ const SEND_MAP: Record<string, CmdSpec> = {
   'mt::open-keybindings-config': {
     command: 'window_create',
     fixed: { kind: 'settings', category: 'keybindings' }
-  }
+  },
+  // Window close flow (Phase 4).
+  'mt::cmd-close-window': { command: 'window_request_close' },
+  'mt::close-window': { command: 'window_close' },
+  'mt::close-window-confirm': { command: 'window_close_confirm', params: ['unsavedFiles'] }
 }
 
 // Built-in Tauri window controls — handled without a custom Rust command.

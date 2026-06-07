@@ -1,8 +1,24 @@
 mod commands;
 
+use tauri::{Emitter, Manager, WindowEvent};
+
+use commands::window::WindowRegistry;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            // Intercept close to run the unsaved-changes flow. Once the renderer
+            // confirms (window_close / window_close_confirm marks the label),
+            // we let the close through instead of re-prompting.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let registry = window.app_handle().state::<WindowRegistry>();
+                if !registry.take_closing(window.label()) {
+                    api.prevent_close();
+                    let _ = window.emit_to(window.label(), "mt::ask-for-close", ());
+                }
+            }
+        })
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -54,6 +70,9 @@ pub fn run() {
             // multi-window (Phase 4)
             commands::window::window_init_args,
             commands::window::window_create,
+            commands::window::window_request_close,
+            commands::window::window_close,
+            commands::window::window_close_confirm,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,
