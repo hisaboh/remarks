@@ -15,7 +15,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_store::{Store, StoreExt};
 
@@ -146,8 +146,10 @@ fn build_document<R: tauri::Runtime>(
     })
 }
 
-fn emit_open_tab(app: &AppHandle, doc: MarkdownDocument, options: Value, selected: bool) {
-    let _ = app.emit("mt::open-new-tab", json!([doc, options, selected]));
+// Target only the requesting window — Tauri's plain `emit` broadcasts to every
+// window, which would leak tabs/state across windows once multiple are open.
+fn emit_open_tab(window: &WebviewWindow, doc: MarkdownDocument, options: Value, selected: bool) {
+    let _ = window.emit_to(window.label(), "mt::open-new-tab", json!([doc, options, selected]));
 }
 
 /// Open a known path (sidebar click, search result). `options` is forwarded to
@@ -155,18 +157,19 @@ fn emit_open_tab(app: &AppHandle, doc: MarkdownDocument, options: Value, selecte
 #[tauri::command]
 pub fn file_open_path(
     app: AppHandle,
+    window: WebviewWindow,
     pathname: String,
     options: Option<Value>,
 ) -> Result<(), String> {
     let store = app.store(PREFERENCES_FILE).map_err(to_err)?;
     let doc = build_document(&store, &pathname)?;
-    emit_open_tab(&app, doc, options.unwrap_or_else(|| json!({})), true);
+    emit_open_tab(&window, doc, options.unwrap_or_else(|| json!({})), true);
     Ok(())
 }
 
 /// Prompt for one or more markdown files, then open each in a tab.
 #[tauri::command]
-pub fn file_open(app: AppHandle) -> Result<(), String> {
+pub fn file_open(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     let picked = app
         .dialog()
         .file()
@@ -184,7 +187,7 @@ pub fn file_open(app: AppHandle) -> Result<(), String> {
         let pathname = path.to_string_lossy().into_owned();
         match build_document(&store, &pathname) {
             // Only the first opened file becomes the active tab.
-            Ok(doc) => emit_open_tab(&app, doc, json!({}), index == 0),
+            Ok(doc) => emit_open_tab(&window, doc, json!({}), index == 0),
             Err(e) => log::error!("failed to open {pathname}: {e}"),
         }
     }
@@ -274,23 +277,25 @@ fn ensure_extension(path: String) -> String {
 
 /// Write the encoded markdown and notify the renderer (set-pathname for a
 /// new/changed path, tab-saved otherwise; tab-save-failure on error).
-fn write_and_react(app: &AppHandle, id: &str, file_path: &str, markdown: &str, options: &Value, emit_pathname: bool) {
+fn write_and_react(window: &WebviewWindow, id: &str, file_path: &str, markdown: &str, options: &Value, emit_pathname: bool) {
+    let label = window.label();
     let bytes = encode_markdown(markdown, options);
     match std::fs::write(file_path, bytes) {
         Ok(()) => {
             if emit_pathname {
-                let _ = app.emit(
+                let _ = window.emit_to(
+                    label,
                     "mt::set-pathname",
                     json!({ "id": id, "pathname": file_path, "filename": basename(file_path) }),
                 );
             } else {
-                let _ = app.emit("mt::tab-saved", id);
+                let _ = window.emit_to(label, "mt::tab-saved", id);
             }
             // TODO(phase-4): window-add-file-path / recently-used / watcher hooks.
         }
         Err(e) => {
             log::error!("save failed for {file_path}: {e}");
-            let _ = app.emit("mt::tab-save-failure", json!([id, e.to_string()]));
+            let _ = window.emit_to(label, "mt::tab-save-failure", json!([id, e.to_string()]));
         }
     }
 }
@@ -324,6 +329,7 @@ fn documents_dir(app: &AppHandle) -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn file_save(
     app: AppHandle,
+    window: WebviewWindow,
     id: String,
     filename: String,
     pathname: Option<String>,
@@ -345,7 +351,7 @@ pub fn file_save(
     };
     let file_path = ensure_extension(file_path);
     // New file (no prior pathname) → push its path back via set-pathname.
-    write_and_react(&app, &id, &file_path, &markdown, &options, pathname.is_none());
+    write_and_react(&window, &id, &file_path, &markdown, &options, pathname.is_none());
     Ok(())
 }
 
@@ -354,6 +360,7 @@ pub fn file_save(
 #[allow(clippy::too_many_arguments)]
 pub fn file_save_as(
     app: AppHandle,
+    window: WebviewWindow,
     id: String,
     filename: String,
     pathname: Option<String>,
@@ -371,6 +378,6 @@ pub fn file_save_as(
     };
     let file_path = ensure_extension(file_path);
     let changed = pathname.as_deref() != Some(file_path.as_str());
-    write_and_react(&app, &id, &file_path, &markdown, &options, changed);
+    write_and_react(&window, &id, &file_path, &markdown, &options, changed);
     Ok(())
 }

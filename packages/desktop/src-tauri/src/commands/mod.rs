@@ -23,3 +23,4 @@ pub mod fs;
 pub mod paths;
 pub mod preferences;
 pub mod shell;
+pub mod window;

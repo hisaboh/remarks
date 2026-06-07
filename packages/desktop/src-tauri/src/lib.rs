@@ -11,6 +11,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::default().build())
         .plugin(tauri_plugin_process::init())
+        .manage(commands::window::WindowRegistry::default())
         .setup(|app| {
             // Seed/reconcile persisted settings before the renderer asks for them.
             let handle = app.handle();
@@ -50,6 +51,9 @@ pub fn run() {
             commands::files::file_open_path,
             commands::files::file_save,
             commands::files::file_save_as,
+            // multi-window (Phase 4)
+            commands::window::window_init_args,
+            commands::window::window_create,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,

@@ -9,7 +9,7 @@
 // be awaited before the Vue app (and muya) load — see main.ts.
 
 import pathe from 'pathe'
-import { emit } from '@tauri-apps/api/event'
+import { emitTo } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import type { BootInfo } from '@shared/types/ipc'
@@ -168,18 +168,14 @@ const fontsAPI: FontsAPI = {
 // ---- default URL args (single editor window) -------------------------------
 
 // The Electron windows were spawned with query args (windowId, userDataPath,
-// theme…). Under Tauri the main window has no query string, so synthesize a
-// default set for the single editor window. Multi-window arg passing is Phase 4.
-const ensureUrlArgs = (bootInfo: BootInfo): void => {
-  const params = new URLSearchParams(window.location.search)
-  if (params.has('wid')) return
-  params.set('wid', '1')
-  params.set('type', 'editor')
-  params.set('udp', bootInfo.paths.userData || '')
-  params.set('debug', '0')
-  params.set('hsb', '0')
-  params.set('theme', 'light')
-  params.set('tbs', 'custom')
+// theme…). Tauri child windows can't carry a query string across the dev/prod
+// URL base, so each window asks the backend for its args (keyed by window
+// label) and applies them — the main window gets default editor args.
+const applyWindowArgs = async (): Promise<void> => {
+  const current = new URLSearchParams(window.location.search)
+  if (current.has('wid')) return
+  const args = (await invoke('mt::window::init-args')) as Record<string, string>
+  const params = new URLSearchParams(args)
   history.replaceState(null, '', `?${params.toString()}${window.location.hash}`)
 }
 
@@ -191,8 +187,10 @@ const ensureUrlArgs = (bootInfo: BootInfo): void => {
 // markdownList, and split per-window config once multi-window lands.
 const registerBootstrapHandshake = (): void => {
   setBootstrapTrigger(() => {
+    const label = getCurrentWindow().label
     void invoke('mt::editor::bootstrap-config')
-      .then((config) => emit('mt::bootstrap-editor', config))
+      // Target THIS window only — a broadcast would re-bootstrap other editors.
+      .then((config) => emitTo(label, 'mt::bootstrap-editor', config))
       .catch((err) => console.error('[platform] bootstrap config failed:', err))
   })
 }
@@ -202,7 +200,7 @@ const registerBootstrapHandshake = (): void => {
 export const initPlatform = async (): Promise<void> => {
   const bootInfo = (await invoke('mt::boot-info-async')) as BootInfo
   setCachedBootInfo(bootInfo)
-  ensureUrlArgs(bootInfo)
+  await applyWindowArgs()
 
   const processInfo = {
     platform: bootInfo.platform,

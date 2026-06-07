@@ -16,6 +16,9 @@ interface CmdSpec {
   command: string
   // Positional-argument names, in order, mapped onto a named args object.
   params?: string[]
+  // Constant args merged into every call (for channels that carry no args but
+  // map to a command needing a discriminator, e.g. window kind).
+  fixed?: Record<string, unknown>
 }
 
 // renderer → main, Promise-returning channels.
@@ -45,7 +48,8 @@ const INVOKE_MAP: Record<string, CmdSpec> = {
   'mt::clipboard::guess-file-path': { command: 'clipboard_guess_file_path' },
   'mt::paths::is-image': { command: 'paths_is_image', params: ['path'] },
   'mt::ask-for-image-path': { command: 'data_center_ask_image_path' },
-  'mt::editor::bootstrap-config': { command: 'editor_bootstrap_config' }
+  'mt::editor::bootstrap-config': { command: 'editor_bootstrap_config' },
+  'mt::window::init-args': { command: 'window_init_args' }
 }
 
 // renderer → main, fire-and-forget channels that map to a command.
@@ -71,6 +75,15 @@ const SEND_MAP: Record<string, CmdSpec> = {
   'mt::ask-for-modify-image-folder-path': {
     command: 'data_center_modify_image_folder_path',
     params: ['imagePath']
+  },
+  // Multi-window creation (Phase 4).
+  'mt::cmd-new-editor-window': { command: 'window_create', fixed: { kind: 'editor' } },
+  'app-create-editor-window': { command: 'window_create', fixed: { kind: 'editor' } },
+  'mt::open-setting-window': { command: 'window_create', fixed: { kind: 'settings' } },
+  'app-create-settings-window': { command: 'window_create', fixed: { kind: 'settings' } },
+  'mt::open-keybindings-config': {
+    command: 'window_create',
+    fixed: { kind: 'settings', category: 'keybindings' }
   }
 }
 
@@ -86,7 +99,7 @@ const WINDOW_CONTROL = new Set([
 ])
 
 const buildArgs = (spec: CmdSpec, args: unknown[]): Record<string, unknown> => {
-  const out: Record<string, unknown> = {}
+  const out: Record<string, unknown> = { ...spec.fixed }
   spec.params?.forEach((name, i) => {
     out[name] = args[i]
   })
