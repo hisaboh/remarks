@@ -45,6 +45,9 @@ pub fn run() {
             commands::encoding::fs_read_text_auto,
             // editor bootstrap (Phase 4)
             commands::editor::editor_bootstrap_config,
+            // file open (Phase 4)
+            commands::files::file_open,
+            commands::files::file_open_path,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,

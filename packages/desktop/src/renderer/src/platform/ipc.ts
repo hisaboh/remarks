@@ -56,6 +56,8 @@ const SEND_MAP: Record<string, CmdSpec> = {
   'mt::set-user-preference': { command: 'preferences_set_items', params: ['settings'] },
   'set-user-preference': { command: 'preferences_set_items', params: ['settings'] },
   'mt::cmd-toggle-autosave': { command: 'preferences_toggle_autosave' },
+  'mt::cmd-open-file': { command: 'file_open' },
+  'mt::open-file': { command: 'file_open_path', params: ['pathname', 'options'] },
   'mt::set-user-data': { command: 'data_center_set_items', params: ['settings'] },
   'set-image-folder-path': { command: 'data_center_set_image_folder_path', params: ['path'] },
   'mt::ask-for-modify-image-folder-path': {

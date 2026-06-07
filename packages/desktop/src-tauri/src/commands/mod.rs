@@ -18,6 +18,7 @@ pub mod clipboard;
 pub mod data_center;
 pub mod editor;
 pub mod encoding;
+pub mod files;
 pub mod fs;
 pub mod paths;
 pub mod preferences;
