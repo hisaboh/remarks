@@ -251,7 +251,14 @@ const subscribe = (channel: string, listener: Listener, once: boolean): (() => v
     }
   }
 
-  void listen(channel, (e) => wrapped(e.payload)).then((fn) => {
+  // Scope to THIS window. The global `listen` registers with EventTarget::Any,
+  // which Tauri's match_any_or_filter short-circuits to true — so an Any
+  // listener receives EVERY emit_to(label) regardless of target, leaking
+  // window-targeted events (e.g. mt::ask-for-close to the settings window also
+  // firing the editor window's handler → wrong window closes). A label target
+  // is matched by the filter, while global `emit` (no filter) still reaches it.
+  void listen(channel, (e) => wrapped(e.payload), { target: getCurrentWindow().label }).then(
+    (fn) => {
     if (disposed) {
       fn()
       return

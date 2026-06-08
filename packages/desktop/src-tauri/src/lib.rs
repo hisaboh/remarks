@@ -13,10 +13,15 @@ pub fn run() {
             // confirms (window_close / window_close_confirm marks the label),
             // we let the close through instead of re-prompting.
             if let WindowEvent::CloseRequested { api, .. } = event {
-                let registry = window.app_handle().state::<WindowRegistry>();
-                if !registry.take_closing(window.label()) {
-                    api.prevent_close();
-                    let _ = window.emit_to(window.label(), "mt::ask-for-close", ());
+                // Only editor windows run the unsaved-changes prompt. The
+                // settings window has no documents (and no ask-for-close
+                // handler), so let it close directly instead of getting stuck.
+                if window.label() != "settings" {
+                    let registry = window.app_handle().state::<WindowRegistry>();
+                    if !registry.take_closing(window.label()) {
+                        api.prevent_close();
+                        let _ = window.emit_to(window.label(), "mt::ask-for-close", ());
+                    }
                 }
             }
             // Window active-status sync (4b): port the Electron focus/blur →
