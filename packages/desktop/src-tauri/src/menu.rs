@@ -14,11 +14,12 @@
 //! variation and focus-driven re-sync are still later tasks.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use tauri::menu::{
     CheckMenuItem, CheckMenuItemBuilder, Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem,
-    SubmenuBuilder,
+    Submenu, SubmenuBuilder,
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -29,6 +30,19 @@ pub const PREFERENCES_ID: &str = "app.preferences";
 const LINE_ENDING_CRLF_ID: &str = "file.line-ending-crlf";
 const LINE_ENDING_LF_ID: &str = "file.line-ending-lf";
 const SIDEBAR_ID: &str = "view.toggle-sidebar";
+
+// Recently-used documents (4g): an "Open Recent" File submenu, persisted to
+// <config_dir>/recently-used-documents.json. Item ids are RECENT_PREFIX+path;
+// RECENT_CLEAR_ID clears the list. (Tauri core has no native OS recent-docs
+// API, so we keep our own list + menu — like Electron's Linux path.)
+const RECENT_PREFIX: &str = "recent:";
+const RECENT_CLEAR_ID: &str = "recent:clear";
+const MAX_RECENT: usize = 12;
+const RECENT_FILE: &str = "recently-used-documents.json";
+
+/// The in-memory recently-used document list (newest first).
+#[derive(Default)]
+pub struct RecentDocs(Mutex<Vec<String>>);
 
 /// Renderer format-state key → menu item id. Mirrors MENU_ID_FORMAT_MAP in
 /// main/menu/actions/format.ts (only the marks that have a menu entry).
@@ -42,10 +56,13 @@ const FORMAT_MAP: &[(&str, &str)] = &[
 ];
 
 /// Holds clonable handles to the checkable menu items so the `menu_update_*`
-/// commands can toggle their state after the menu is built.
+/// commands can toggle their state after the menu is built, plus the dynamic
+/// "Open Recent" submenu so it can be refreshed without rebuilding the menu
+/// (which would reset the checkbox state).
 #[derive(Default)]
 pub struct MenuState {
     checks: Mutex<HashMap<String, CheckMenuItem<tauri::Wry>>>,
+    open_recent: Mutex<Option<Submenu<tauri::Wry>>>,
 }
 
 impl MenuState {
@@ -60,6 +77,98 @@ impl MenuState {
         if let Some(item) = self.checks.lock().unwrap().get(id) {
             let _ = item.set_checked(checked);
         }
+    }
+}
+
+// ---- recently-used documents (4g) -------------------------------------------
+
+fn recent_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join(RECENT_FILE))
+}
+
+/// Load the persisted recent list into the managed [`RecentDocs`] (call in setup
+/// before `build_menu`, which reads it to populate the submenu).
+pub fn load_recent(app: &AppHandle) {
+    let Some(path) = recent_path(app) else { return };
+    let Ok(content) = std::fs::read_to_string(&path) else { return };
+    let list: Vec<String> = serde_json::from_str(&content).unwrap_or_default();
+    // Drop entries that no longer exist on disk.
+    let list: Vec<String> = list
+        .into_iter()
+        .filter(|p| std::path::Path::new(p).is_file())
+        .take(MAX_RECENT)
+        .collect();
+    *app.state::<RecentDocs>().0.lock().unwrap() = list;
+}
+
+fn save_recent(app: &AppHandle, list: &[String]) {
+    let Some(path) = recent_path(app) else { return };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(list) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// Record a freshly opened/saved file at the top of the recent list, persist it,
+/// and refresh the "Open Recent" submenu.
+pub fn add_recent(app: &AppHandle, file_path: &str) {
+    {
+        let state = app.state::<RecentDocs>();
+        let mut list = state.0.lock().unwrap();
+        list.retain(|p| p != file_path);
+        list.insert(0, file_path.to_string());
+        list.truncate(MAX_RECENT);
+        save_recent(app, &list);
+    }
+    refresh_recent_menu(app);
+}
+
+fn clear_recent(app: &AppHandle) {
+    {
+        let state = app.state::<RecentDocs>();
+        state.0.lock().unwrap().clear();
+        save_recent(app, &[]);
+    }
+    refresh_recent_menu(app);
+}
+
+/// Rebuild the "Open Recent" submenu's items from the current list.
+fn refresh_recent_menu(app: &AppHandle) {
+    let menu_state = app.state::<MenuState>();
+    let guard = menu_state.open_recent.lock().unwrap();
+    let Some(submenu) = guard.as_ref() else { return };
+    // Clear existing items.
+    while let Ok(Some(_)) = submenu.remove_at(0) {}
+    let list = app.state::<RecentDocs>().0.lock().unwrap().clone();
+    if list.is_empty() {
+        if let Ok(item) = MenuItemBuilder::with_id("recent:none", "No Recent Files")
+            .enabled(false)
+            .build(app)
+        {
+            let _ = submenu.append(&item);
+        }
+        return;
+    }
+    for path in &list {
+        let label = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
+        if let Ok(item) = MenuItemBuilder::with_id(format!("{RECENT_PREFIX}{path}"), label).build(app)
+        {
+            let _ = submenu.append(&item);
+        }
+    }
+    if let Ok(sep) = PredefinedMenuItem::separator(app) {
+        let _ = submenu.append(&sep);
+    }
+    if let Ok(clear) = MenuItemBuilder::with_id(RECENT_CLEAR_ID, "Clear Recent Files").build(app) {
+        let _ = submenu.append(&clear);
     }
 }
 
@@ -113,11 +222,18 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&check(app, LINE_ENDING_LF_ID, "Line Feed (LF)", None)?)
         .build()?;
 
+    // Dynamic "Open Recent" submenu (4g) — populated from the loaded list and
+    // refreshed in place on open/save (stored in MenuState).
+    let open_recent = SubmenuBuilder::new(app, "Open Recent").build()?;
+    *app.state::<MenuState>().open_recent.lock().unwrap() = Some(open_recent.clone());
+    refresh_recent_menu(app);
+
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&cmd(app, "file.new-tab", "New Tab", Some("CmdOrCtrl+T"))?)
         .item(&cmd(app, "file.new-window", "New Window", Some("CmdOrCtrl+Shift+N"))?)
         .separator()
         .item(&cmd(app, "file.open-file", "Open File…", Some("CmdOrCtrl+O"))?)
+        .item(&open_recent)
         .separator()
         .item(&cmd(app, "file.save", "Save", Some("CmdOrCtrl+S"))?)
         .item(&cmd(app, "file.save-as", "Save As…", Some("CmdOrCtrl+Shift+S"))?)
@@ -207,6 +323,17 @@ fn focused_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
 pub fn handle_menu_event(app: &AppHandle, id: &str) {
     if id == PREFERENCES_ID {
         crate::commands::window::open_settings(app);
+        return;
+    }
+    // Recently-used documents (4g): clear, or open the path encoded in the id.
+    if id == RECENT_CLEAR_ID {
+        clear_recent(app);
+        return;
+    }
+    if let Some(path) = id.strip_prefix(RECENT_PREFIX) {
+        if let Some(window) = focused_window(app) {
+            crate::commands::files::open_path_in_window(app, &window, path, true);
+        }
         return;
     }
     // Context-menu popup items are routed back as mt::menu::click, not as

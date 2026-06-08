@@ -184,6 +184,7 @@ pub fn open_path_in_window(app: &AppHandle, window: &WebviewWindow, pathname: &s
         Ok(doc) => {
             emit_open_tab(window, doc, json!({}), selected);
             crate::commands::watcher::watch_file(app, pathname);
+            crate::menu::add_recent(app, pathname);
         }
         Err(e) => log::error!("open {pathname} failed: {e}"),
     }
@@ -202,6 +203,7 @@ pub fn file_open_path(
     let doc = build_document(&store, &pathname)?;
     emit_open_tab(&window, doc, options.unwrap_or_else(|| json!({})), true);
     crate::commands::watcher::watch_file(&app, &pathname);
+    crate::menu::add_recent(&app, &pathname);
     Ok(())
 }
 
@@ -236,6 +238,7 @@ pub fn file_open(app: AppHandle, window: WebviewWindow) {
                     Ok(doc) => {
                         emit_open_tab(&window, doc, json!({}), index == 0);
                         crate::commands::watcher::watch_file(&app_cb, &pathname);
+                        crate::menu::add_recent(&app_cb, &pathname);
                     }
                     Err(e) => log::error!("failed to open {pathname}: {e}"),
                 }
@@ -345,7 +348,8 @@ fn write_and_react(window: &WebviewWindow, id: &str, file_path: &str, markdown: 
             }
             // Watch the (possibly new) path for external changes (4f).
             crate::commands::watcher::watch_file(&app, file_path);
-            // TODO(phase-4): window-add-file-path / recently-used hooks.
+            // Record in the recently-used documents menu (4g).
+            crate::menu::add_recent(&app, file_path);
         }
         Err(e) => {
             log::error!("save failed for {file_path}: {e}");
@@ -385,6 +389,49 @@ fn documents_dir(app: &AppHandle) -> String {
         .unwrap_or_default()
 }
 
+/// The top heading from the markdown (lowest #-level, first wins) — Electron's
+/// getRecommendTitleFromMarkdownString. Empty if there are no headings. (Like
+/// upstream this also matches headings inside code fences.)
+fn recommend_title(markdown: &str) -> String {
+    let mut best: Option<(usize, String)> = None;
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        let hashes = trimmed.chars().take_while(|&c| c == '#').count();
+        if !(1..=6).contains(&hashes) {
+            continue;
+        }
+        let rest = &trimmed[hashes..];
+        if !rest.starts_with(' ') {
+            continue;
+        }
+        let content = rest.trim();
+        if content.is_empty() {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(lvl, _)| hashes < *lvl) {
+            best = Some((hashes, content.to_string()));
+        }
+    }
+    best.map(|(_, c)| c).unwrap_or_default()
+}
+
+/// Suggested base filename for an untitled save: heading from content (4g),
+/// else the current filename, else "Untitled". Path separators are stripped so
+/// the value is safe to use as a dialog default file name.
+fn recommend_filename(markdown: &str, filename: &str) -> String {
+    let base = {
+        let title = recommend_title(markdown);
+        if !title.is_empty() {
+            title
+        } else if !filename.is_empty() {
+            filename.to_string()
+        } else {
+            "Untitled".to_string()
+        }
+    };
+    base.replace(['/', '\\'], " ")
+}
+
 /// Save (Cmd+S). Existing path writes in place; a new file prompts for a path.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -405,7 +452,7 @@ pub fn file_save(
         return Ok(());
     }
     // New file: prompt for a path (non-blocking), then write + set-pathname.
-    let recommend = if filename.is_empty() { "Untitled".to_string() } else { filename };
+    let recommend = recommend_filename(&markdown, &filename);
     let dir = default_path.unwrap_or_else(|| documents_dir(&app));
     let default = format!("{dir}/{recommend}.md");
     save_dialog(&app, &default, move |chosen| {
@@ -430,7 +477,7 @@ pub fn file_save_as(
     options: Value,
     default_path: Option<String>,
 ) -> Result<(), String> {
-    let recommend = if filename.is_empty() { "Untitled".to_string() } else { filename };
+    let recommend = recommend_filename(&markdown, &filename);
     let default = pathname.clone().unwrap_or_else(|| {
         let dir = default_path.unwrap_or_else(|| documents_dir(&app));
         format!("{dir}/{recommend}.md")
@@ -488,7 +535,7 @@ fn process_save_queue(app: AppHandle, window: WebviewWindow, mut queue: VecDeque
         return;
     };
     // Untitled file → prompt for a path, write if chosen, then continue.
-    let recommend = if f.filename.is_empty() { "Untitled".to_string() } else { f.filename.clone() };
+    let recommend = recommend_filename(&f.markdown, &f.filename);
     let dir = f.default_path.clone().unwrap_or_else(|| documents_dir(&app));
     let default = format!("{dir}/{recommend}.md");
     let app_next = app.clone();

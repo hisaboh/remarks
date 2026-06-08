@@ -42,6 +42,7 @@ pub fn run() {
         .manage(commands::window::WindowRegistry::default())
         .manage(commands::context_menu::PopupMenuState::default())
         .manage(menu::MenuState::default())
+        .manage(menu::RecentDocs::default())
         .manage(commands::editor::PendingOpen::from_args())
         .manage(commands::watcher::WatcherState::default())
         .on_menu_event(|app, event| {
@@ -56,6 +57,7 @@ pub fn run() {
             if let Err(e) = commands::data_center::init(handle) {
                 log::error!("data center init failed: {e}");
             }
+            menu::load_recent(handle);
             app.set_menu(menu::build_menu(handle)?)?;
             commands::watcher::init(handle);
             Ok(())
