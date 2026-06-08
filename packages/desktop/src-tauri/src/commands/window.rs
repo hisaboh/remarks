@@ -197,8 +197,10 @@ pub fn window_close_confirm(
     unsaved_files: Value,
 ) -> Result<(), String> {
     let count = unsaved_files.as_array().map(|a| a.len()).unwrap_or(0);
-    let confirmed = app
-        .dialog()
+    // NON-blocking dialog (see file_open): sync commands run on the main thread,
+    // and a blocking dialog there deadlocks the UI. Close in the callback.
+    let app_cb = app.clone();
+    app.dialog()
         .message(format!(
             "You have {count} file(s) with unsaved changes. Close without saving?"
         ))
@@ -207,10 +209,15 @@ pub fn window_close_confirm(
             "Close without saving".into(),
             "Cancel".into(),
         ))
-        .blocking_show();
-    if confirmed {
-        app.state::<WindowRegistry>().mark_closing(window.label());
-        window.close().map_err(|e| e.to_string())?;
-    }
+        .show(move |confirmed| {
+            if confirmed {
+                app_cb
+                    .state::<WindowRegistry>()
+                    .mark_closing(window.label());
+                if let Err(e) = window.close() {
+                    log::error!("close confirm: {e}");
+                }
+            }
+        });
     Ok(())
 }

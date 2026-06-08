@@ -98,36 +98,46 @@ pub fn data_center_set_image_folder_path(app: AppHandle, path: String) -> Result
 }
 
 /// Prompt for a folder (when no path is given) and store it as the image folder.
+/// Non-blocking dialog (sync commands run on the main thread — a blocking dialog
+/// there deadlocks the UI).
 #[tauri::command]
-pub fn data_center_modify_image_folder_path(
-    app: AppHandle,
-    image_path: Option<String>,
-) -> Result<(), String> {
-    let resolved = match image_path {
-        Some(p) => Some(p),
-        None => app
-            .dialog()
-            .file()
-            .blocking_pick_folder()
-            .and_then(|fp| fp.into_path().ok())
-            .map(|p| p.to_string_lossy().into_owned()),
-    };
-    if let Some(path) = resolved {
+pub fn data_center_modify_image_folder_path(app: AppHandle, image_path: Option<String>) {
+    if let Some(path) = image_path {
         let mut change = Map::new();
         change.insert("imageFolderPath".into(), Value::String(path));
-        set_items_internal(&app, &change)?;
+        let _ = set_items_internal(&app, &change);
+        return;
     }
-    Ok(())
+    let app_cb = app.clone();
+    app.dialog().file().pick_folder(move |folder| {
+        if let Some(path) = folder.and_then(|fp| fp.into_path().ok()) {
+            let mut change = Map::new();
+            change.insert(
+                "imageFolderPath".into(),
+                Value::String(path.to_string_lossy().into_owned()),
+            );
+            let _ = set_items_internal(&app_cb, &change);
+        }
+    });
 }
 
 /// Prompt for an image file and return its path (empty string if cancelled).
+/// `async` so it runs off the main thread; bridges the non-blocking dialog
+/// callback back to a return value via a channel.
 #[tauri::command]
-pub fn data_center_ask_image_path(app: AppHandle) -> String {
+pub async fn data_center_ask_image_path(app: AppHandle) -> String {
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
     app.dialog()
         .file()
         .add_filter("Images", IMAGE_EXTENSIONS)
-        .blocking_pick_file()
-        .and_then(|fp| fp.into_path().ok())
-        .map(|p| p.to_string_lossy().into_owned())
+        .pick_file(move |file| {
+            let path = file
+                .and_then(|fp| fp.into_path().ok())
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let _ = tx.send(path);
+        });
+    tauri::async_runtime::spawn_blocking(move || rx.recv().unwrap_or_default())
+        .await
         .unwrap_or_default()
 }

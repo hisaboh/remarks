@@ -168,30 +168,38 @@ pub fn file_open_path(
 }
 
 /// Prompt for one or more markdown files, then open each in a tab.
+///
+/// Uses the NON-blocking dialog API: synchronous Tauri commands run on the main
+/// thread, and a `blocking_*` dialog there deadlocks with the dialog's own need
+/// for the main thread (UI beachball). The callback runs when the dialog closes.
 #[tauri::command]
-pub fn file_open(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    let picked = app
-        .dialog()
+pub fn file_open(app: AppHandle, window: WebviewWindow) {
+    let app_cb = app.clone();
+    app.dialog()
         .file()
         .add_filter("Markdown", MARKDOWN_EXTENSIONS)
         .add_filter("All Files", &["*"])
-        .blocking_pick_files();
-
-    let Some(files) = picked else {
-        return Ok(()); // cancelled
-    };
-
-    let store = app.store(PREFERENCES_FILE).map_err(to_err)?;
-    for (index, file) in files.into_iter().enumerate() {
-        let Ok(path) = file.into_path() else { continue };
-        let pathname = path.to_string_lossy().into_owned();
-        match build_document(&store, &pathname) {
-            // Only the first opened file becomes the active tab.
-            Ok(doc) => emit_open_tab(&window, doc, json!({}), index == 0),
-            Err(e) => log::error!("failed to open {pathname}: {e}"),
-        }
-    }
-    Ok(())
+        .pick_files(move |picked| {
+            let Some(files) = picked else {
+                return; // cancelled
+            };
+            let store = match app_cb.store(PREFERENCES_FILE) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("open: store unavailable: {e}");
+                    return;
+                }
+            };
+            for (index, file) in files.into_iter().enumerate() {
+                let Ok(path) = file.into_path() else { continue };
+                let pathname = path.to_string_lossy().into_owned();
+                match build_document(&store, &pathname) {
+                    // Only the first opened file becomes the active tab.
+                    Ok(doc) => emit_open_tab(&window, doc, json!({}), index == 0),
+                    Err(e) => log::error!("failed to open {pathname}: {e}"),
+                }
+            }
+        });
 }
 
 // ---- save -------------------------------------------------------------------
@@ -300,7 +308,13 @@ fn write_and_react(window: &WebviewWindow, id: &str, file_path: &str, markdown: 
     }
 }
 
-fn save_dialog(app: &AppHandle, default_full_path: &str) -> Option<String> {
+/// Show a save dialog (NON-blocking — see file_open) seeded with the default
+/// directory/filename, invoking `cb` with the chosen path (or None if cancelled).
+fn save_dialog<F: FnOnce(Option<String>) + Send + 'static>(
+    app: &AppHandle,
+    default_full_path: &str,
+    cb: F,
+) {
     let path = Path::new(default_full_path);
     let mut builder = app.dialog().file();
     if let Some(dir) = path.parent() {
@@ -311,10 +325,11 @@ fn save_dialog(app: &AppHandle, default_full_path: &str) -> Option<String> {
     if let Some(name) = path.file_name() {
         builder = builder.set_file_name(name.to_string_lossy());
     }
-    builder
-        .blocking_save_file()
-        .and_then(|fp| fp.into_path().ok())
-        .map(|p| p.to_string_lossy().into_owned())
+    builder.save_file(move |fp| {
+        cb(fp
+            .and_then(|f| f.into_path().ok())
+            .map(|p| p.to_string_lossy().into_owned()))
+    });
 }
 
 fn documents_dir(app: &AppHandle) -> String {
@@ -337,21 +352,22 @@ pub fn file_save(
     options: Value,
     default_path: Option<String>,
 ) -> Result<(), String> {
+    // Existing path: write in place (no dialog), emit tab-saved.
+    if let Some(p) = pathname {
+        let file_path = ensure_extension(p);
+        write_and_react(&window, &id, &file_path, &markdown, &options, false);
+        return Ok(());
+    }
+    // New file: prompt for a path (non-blocking), then write + set-pathname.
     let recommend = if filename.is_empty() { "Untitled".to_string() } else { filename };
-    let resolved = match &pathname {
-        Some(p) => Some(p.clone()),
-        None => {
-            let dir = default_path.unwrap_or_else(|| documents_dir(&app));
-            let default = format!("{dir}/{recommend}.md");
-            save_dialog(&app, &default)
+    let dir = default_path.unwrap_or_else(|| documents_dir(&app));
+    let default = format!("{dir}/{recommend}.md");
+    save_dialog(&app, &default, move |chosen| {
+        if let Some(file_path) = chosen {
+            let file_path = ensure_extension(file_path);
+            write_and_react(&window, &id, &file_path, &markdown, &options, true);
         }
-    };
-    let Some(file_path) = resolved else {
-        return Ok(()); // cancelled
-    };
-    let file_path = ensure_extension(file_path);
-    // New file (no prior pathname) → push its path back via set-pathname.
-    write_and_react(&window, &id, &file_path, &markdown, &options, pathname.is_none());
+    });
     Ok(())
 }
 
@@ -373,11 +389,13 @@ pub fn file_save_as(
         let dir = default_path.unwrap_or_else(|| documents_dir(&app));
         format!("{dir}/{recommend}.md")
     });
-    let Some(file_path) = save_dialog(&app, &default) else {
-        return Ok(()); // cancelled
-    };
-    let file_path = ensure_extension(file_path);
-    let changed = pathname.as_deref() != Some(file_path.as_str());
-    write_and_react(&window, &id, &file_path, &markdown, &options, changed);
+    let old_path = pathname;
+    save_dialog(&app, &default, move |chosen| {
+        if let Some(file_path) = chosen {
+            let file_path = ensure_extension(file_path);
+            let changed = old_path.as_deref() != Some(file_path.as_str());
+            write_and_react(&window, &id, &file_path, &markdown, &options, changed);
+        }
+    });
     Ok(())
 }
