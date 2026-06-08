@@ -96,6 +96,7 @@ pub fn run() {
             commands::files::file_open_path,
             commands::files::file_save,
             commands::files::file_save_as,
+            commands::files::save_and_close_tabs,
             // multi-window (Phase 4)
             commands::window::window_init_args,
             commands::window::window_create,

@@ -17,7 +17,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 use tauri_plugin_store::{Store, StoreExt};
 
 use crate::commands::encoding;
@@ -547,4 +547,87 @@ fn process_save_queue(app: AppHandle, window: WebviewWindow, mut queue: VecDeque
         }
         process_save_queue(app_next, window_next, queue);
     });
+}
+
+// ---- save-and-close tabs (closing an unsaved/edited tab) --------------------
+
+const SAVE_LABEL: &str = "Save";
+const DONT_SAVE_LABEL: &str = "Don't Save";
+
+/// `mt::save-and-close-tabs` — closing tab(s) with unsaved changes. Shows the
+/// Save / Don't Save / Cancel prompt, then closes the tab(s) via
+/// `mt::force-close-tabs-by-id` (Save writes first; an untitled file whose save
+/// dialog is cancelled stays open).
+#[tauri::command]
+pub fn save_and_close_tabs(app: AppHandle, window: WebviewWindow, unsaved_files: Value) {
+    let count = unsaved_files.as_array().map(|a| a.len()).unwrap_or(0);
+    let files: Vec<UnsavedFile> = serde_json::from_value(unsaved_files).unwrap_or_default();
+    if files.is_empty() {
+        return;
+    }
+    app.dialog()
+        .message(format!(
+            "You have {count} file(s) with unsaved changes. Do you want to save them before closing?"
+        ))
+        .title("Unsaved Changes")
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            SAVE_LABEL.into(),
+            DONT_SAVE_LABEL.into(),
+            "Cancel".into(),
+        ))
+        .show_with_result(move |res| {
+            let save = matches!(&res, MessageDialogResult::Yes)
+                || matches!(&res, MessageDialogResult::Custom(s) if s == SAVE_LABEL);
+            let dont_save = matches!(&res, MessageDialogResult::No)
+                || matches!(&res, MessageDialogResult::Custom(s) if s == DONT_SAVE_LABEL);
+            if save {
+                process_close_queue(app, window, files.into(), Vec::new());
+            } else if dont_save {
+                let ids: Vec<&str> = files.iter().map(|f| f.id.as_str()).collect();
+                force_close_tabs(&window, &ids);
+            }
+            // Cancel / dismissed → keep the tab(s) open.
+        });
+}
+
+/// Save the queued files (path-backed in place, untitled via dialog) and close
+/// the successfully-saved tabs. Mirrors process_save_queue but emits
+/// force-close-tabs-by-id instead of closing the window.
+fn process_close_queue(
+    app: AppHandle,
+    window: WebviewWindow,
+    mut queue: VecDeque<UnsavedFile>,
+    mut saved: Vec<String>,
+) {
+    while matches!(queue.front(), Some(f) if f.pathname.is_some()) {
+        let f = queue.pop_front().unwrap();
+        let file_path = ensure_extension(f.pathname.unwrap());
+        write_and_react(&window, &f.id, &file_path, &f.markdown, &f.options, false);
+        saved.push(f.id);
+    }
+    let Some(f) = queue.pop_front() else {
+        let ids: Vec<&str> = saved.iter().map(String::as_str).collect();
+        force_close_tabs(&window, &ids);
+        return;
+    };
+    let recommend = recommend_filename(&f.markdown, &f.filename);
+    let dir = f.default_path.clone().unwrap_or_else(|| documents_dir(&app));
+    let default = format!("{dir}/{recommend}.md");
+    let app_next = app.clone();
+    let window_next = window.clone();
+    save_dialog(&app, &default, move |chosen| {
+        if let Some(file_path) = chosen {
+            let file_path = ensure_extension(file_path);
+            write_and_react(&window_next, &f.id, &file_path, &f.markdown, &f.options, true);
+            saved.push(f.id);
+        }
+        process_close_queue(app_next, window_next, queue, saved);
+    });
+}
+
+/// Emit `mt::force-close-tabs-by-id`. The id list is wrapped in an extra array
+/// so the shim (which spreads a top-level array) delivers it as the single
+/// `tabIdList` argument the renderer expects.
+fn force_close_tabs(window: &WebviewWindow, ids: &[&str]) {
+    let _ = window.emit_to(window.label(), "mt::force-close-tabs-by-id", json!([ids]));
 }

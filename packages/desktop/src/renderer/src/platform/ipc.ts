@@ -75,6 +75,8 @@ const SEND_MAP: Record<string, CmdSpec> = {
     command: 'file_save_as',
     params: ['id', 'filename', 'pathname', 'markdown', 'options', 'defaultPath']
   },
+  // Closing tab(s) with unsaved changes → Save/Don't Save/Cancel then close.
+  'mt::save-and-close-tabs': { command: 'save_and_close_tabs', params: ['unsavedFiles'] },
   'mt::set-user-data': { command: 'data_center_set_items', params: ['settings'] },
   'set-image-folder-path': { command: 'data_center_set_image_folder_path', params: ['path'] },
   'mt::ask-for-modify-image-folder-path': {
