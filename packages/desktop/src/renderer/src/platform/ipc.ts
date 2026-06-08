@@ -11,6 +11,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { BootInfo } from '@shared/types/ipc'
+import { getDefaultKeybindingMap, setUserKeybindings } from '../keybinding'
 
 interface CmdSpec {
   command: string
@@ -148,6 +149,27 @@ const handleWindowControl = (channel: string, args: unknown[]): void => {
 }
 
 export const invoke = (channel: string, ...args: unknown[]): Promise<unknown> => {
+  // Keybinding settings editor (4d). The renderer's KeybindingConfigurator
+  // expects real Map instances (JSON can't carry Maps), so convert here.
+  if (channel === 'mt::keybinding-get-keyboard-info') {
+    // No native-keymap under Tauri; en-US fallback (atom-keymap handles empty).
+    return Promise.resolve({ layout: null, keymap: {} })
+  }
+  if (channel === 'mt::keybinding-get-pref-keybindings') {
+    return tauriInvoke('keybindings_get_user').then((user) => ({
+      defaultKeybindings: getDefaultKeybindingMap(),
+      userKeybindings: new Map(Object.entries((user ?? {}) as Record<string, string>))
+    }))
+  }
+  if (channel === 'mt::keybinding-save-user-keybindings') {
+    const map = (args[0] ?? new Map()) as Map<string, string>
+    const bindings = Object.fromEntries(map)
+    return tauriInvoke('keybindings_save_user', { bindings }).then((ok) => {
+      // Apply live so customizations take effect without a restart.
+      if (ok) setUserKeybindings(new Map(map))
+      return ok
+    })
+  }
   const spec = INVOKE_MAP[channel]
   if (!spec) {
     console.warn(`[platform] unimplemented invoke channel: ${channel}`)

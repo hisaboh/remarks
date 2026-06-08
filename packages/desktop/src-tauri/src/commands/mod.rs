@@ -21,6 +21,7 @@ pub mod editor;
 pub mod encoding;
 pub mod files;
 pub mod fs;
+pub mod keybindings;
 pub mod paths;
 pub mod preferences;
 pub mod shell;

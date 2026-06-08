@@ -31,6 +31,28 @@ const defaultKeybindings = (): Map<string, string> => {
   }
 }
 
+// User overrides loaded from keybindings.json (4d), merged over the defaults.
+// An empty-string accelerator unbinds a default (acceleratorSignature returns
+// null for it, so buildLookup skips it).
+let userKeybindings: Map<string, string> = new Map()
+
+const mergedKeybindings = (): Map<string, string> => {
+  const merged = new Map(defaultKeybindings())
+  for (const [id, accelerator] of userKeybindings) {
+    merged.set(id, accelerator)
+  }
+  return merged
+}
+
+/** Platform default map (no user overrides) — for the settings editor. */
+export const getDefaultKeybindingMap = (): Map<string, string> => defaultKeybindings()
+
+/** Apply user overrides and rebuild the dispatch lookup (live, after a save). */
+export const setUserKeybindings = (user: Map<string, string>): void => {
+  userKeybindings = user
+  if (signatureToCommand) signatureToCommand = buildLookup()
+}
+
 // Canonicalize an accelerator token into a stable modifier/key signature so a
 // map entry like "Command+Shift+S" and a KeyboardEvent compare equal.
 const canonModifier = (token: string): string | null => {
@@ -143,7 +165,7 @@ let signatureToCommand: Map<string, string> | null = null
 
 const buildLookup = (): Map<string, string> => {
   const lookup = new Map<string, string>()
-  for (const [id, accelerator] of defaultKeybindings()) {
+  for (const [id, accelerator] of mergedKeybindings()) {
     const sig = acceleratorSignature(accelerator)
     // First binding for a signature wins (defaults have no intra-map dupes).
     if (sig && !lookup.has(sig)) lookup.set(sig, id)
@@ -167,9 +189,9 @@ const onKeyDown = (e: KeyboardEvent): void => {
   }
 }
 
-/** The {commandId: accelerator} map, for command-palette display. */
+/** The {commandId: accelerator} map (defaults + user), for palette display. */
 export const getKeybindingMap = (): Record<string, string> =>
-  Object.fromEntries(defaultKeybindings())
+  Object.fromEntries(mergedKeybindings())
 
 /** Install the global keydown dispatcher. */
 export const installKeybindings = (): void => {

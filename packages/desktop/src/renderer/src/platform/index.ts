@@ -21,7 +21,7 @@ import {
   setBootstrapTrigger,
   setKeybindingsResponder
 } from './ipc'
-import { installKeybindings, getKeybindingMap } from '../keybinding'
+import { installKeybindings, getKeybindingMap, setUserKeybindings } from '../keybinding'
 
 export const isTauri = (): boolean => '__TAURI_INTERNALS__' in window
 
@@ -253,8 +253,16 @@ export const initPlatform = async (): Promise<void> => {
   // app) attaches its listener.
   registerBootstrapHandshake()
 
-  // Keyboard shortcuts: install the global dispatcher and answer the renderer's
-  // mt::request-keybindings with the platform default map (for palette display).
+  // Keyboard shortcuts: load user overrides (4d), then install the global
+  // dispatcher and answer mt::request-keybindings with the merged map.
+  try {
+    const { userKeybindings } = (await invoke('mt::keybinding-get-pref-keybindings')) as {
+      userKeybindings: Map<string, string>
+    }
+    setUserKeybindings(userKeybindings)
+  } catch (err) {
+    console.error('[platform] failed to load user keybindings:', err)
+  }
   installKeybindings()
   setKeybindingsResponder(() => {
     void emitTo(getCurrentWindow().label, 'mt::keybindings-response', getKeybindingMap())
