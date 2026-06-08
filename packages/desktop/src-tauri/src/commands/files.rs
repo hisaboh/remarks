@@ -153,6 +153,22 @@ fn emit_open_tab(window: &WebviewWindow, doc: MarkdownDocument, options: Value, 
     let _ = window.emit_to(window.label(), "mt::open-new-tab", json!([doc, options, selected]));
 }
 
+/// Build a document for a known path and open it in `window` (used by the
+/// macOS Opened handler — 4e). Errors are logged, not surfaced.
+pub fn open_path_in_window(app: &AppHandle, window: &WebviewWindow, pathname: &str, selected: bool) {
+    let store = match app.store(PREFERENCES_FILE) {
+        Ok(store) => store,
+        Err(e) => {
+            log::error!("open {pathname}: store unavailable: {e}");
+            return;
+        }
+    };
+    match build_document(&store, pathname) {
+        Ok(doc) => emit_open_tab(window, doc, json!({}), selected),
+        Err(e) => log::error!("open {pathname} failed: {e}"),
+    }
+}
+
 /// Open a known path (sidebar click, search result). `options` is forwarded to
 /// the renderer untouched (cursor/selection hints etc.).
 #[tauri::command]

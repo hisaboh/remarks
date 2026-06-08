@@ -190,14 +190,21 @@ const applyWindowArgs = async (): Promise<void> => {
 // trigger fired when the editor store attaches its listener (see ipc.ts): we
 // fetch the config the Electron main process used to build (from preferences)
 // and emit the event the editor store waits on.
-// TODO(phase-4): pass opened files (CLI args / restored session) into
-// markdownList, and split per-window config once multi-window lands.
+// TODO(phase-4): split per-window config once multi-window lands; full
+// session-buffer restore is still deferred.
 const registerBootstrapHandshake = (): void => {
   setBootstrapTrigger(() => {
     const label = getCurrentWindow().label
     void invoke('mt::editor::bootstrap-config')
       // Target THIS window only — a broadcast would re-bootstrap other editors.
-      .then((config) => emitTo(label, 'mt::bootstrap-editor', config))
+      .then((config) => {
+        emitTo(label, 'mt::bootstrap-editor', config)
+        // 4e: open launch files (CLI argv / macOS Opened) after init. Each
+        // mt::open-file → file_open_path reads the file async, so the blank
+        // bootstrap-editor handler runs first.
+        const files = (config as { filesToOpen?: string[] }).filesToOpen ?? []
+        for (const path of files) send('mt::open-file', path)
+      })
       .catch((err) => console.error('[platform] bootstrap config failed:', err))
   })
 }

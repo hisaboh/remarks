@@ -42,6 +42,7 @@ pub fn run() {
         .manage(commands::window::WindowRegistry::default())
         .manage(commands::context_menu::PopupMenuState::default())
         .manage(menu::MenuState::default())
+        .manage(commands::editor::PendingOpen::from_args())
         .on_menu_event(|app, event| {
             menu::handle_menu_event(app, event.id().as_ref());
         })
@@ -123,6 +124,14 @@ pub fn run() {
             commands::data_center::data_center_modify_image_folder_path,
             commands::data_center::data_center_ask_image_path,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running marktext")
+        .build(tauri::generate_context!())
+        .expect("error while building marktext")
+        .run(|_app, _event| {
+            // macOS file-association / "Open With" delivers paths as Opened
+            // events (not argv) — route them into the open flow (4e).
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = _event {
+                commands::editor::handle_opened(_app, urls);
+            }
+        });
 }
