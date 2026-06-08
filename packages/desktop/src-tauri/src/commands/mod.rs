@@ -24,6 +24,7 @@ pub mod fs;
 pub mod keybindings;
 pub mod paths;
 pub mod preferences;
+pub mod search;
 pub mod shell;
 pub mod watcher;
 pub mod window;

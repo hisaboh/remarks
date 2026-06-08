@@ -50,6 +50,7 @@ pub fn run() {
         .manage(menu::RecentDocs::default())
         .manage(commands::editor::PendingOpen::from_args())
         .manage(commands::watcher::WatcherState::default())
+        .manage(commands::search::SearchState::default())
         .on_menu_event(|app, event| {
             menu::handle_menu_event(app, event.id().as_ref());
         })
@@ -113,6 +114,9 @@ pub fn run() {
             commands::keybindings::keybindings_save_user,
             // sidebar project folder (open-folder + directory tree watch)
             commands::watcher::project_open,
+            // ripgrep search
+            commands::search::rg_start,
+            commands::search::rg_cancel,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,

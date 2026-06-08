@@ -52,7 +52,9 @@ const INVOKE_MAP: Record<string, CmdSpec> = {
   'mt::editor::bootstrap-config': { command: 'editor_bootstrap_config' },
   'mt::window::init-args': { command: 'window_init_args' },
   'mt::menu::popup': { command: 'menu_popup', params: ['template', 'position'] },
-  'mt::menu::popup-application': { command: 'menu_popup_application' }
+  'mt::menu::popup-application': { command: 'menu_popup_application' },
+  // ripgrep search start (the whole request object is one command arg).
+  'mt::rg::start': { command: 'rg_start', params: ['req'] }
 }
 
 // renderer → main, fire-and-forget channels that map to a command.
@@ -102,7 +104,8 @@ const SEND_MAP: Record<string, CmdSpec> = {
   'mt::update-sidebar-menu': { command: 'menu_update_sidebar', params: ['_wid', 'visible'] },
   // Open a folder as the sidebar project (sidebar button + command/menu).
   'mt::ask-for-open-project-in-sidebar': { command: 'project_open' },
-  'mt::cmd-open-folder': { command: 'project_open' }
+  'mt::cmd-open-folder': { command: 'project_open' },
+  'mt::rg::cancel': { command: 'rg_cancel', params: ['searchId'] }
 }
 
 // Built-in Tauri window controls — handled without a custom Rust command.

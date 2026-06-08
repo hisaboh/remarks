@@ -145,8 +145,6 @@ const windowControlAPI: ElectronWindowControlAPI = {
   popupApplicationMenu: (position) => void invoke('mt::menu::popup-application', position)
 }
 
-const noopDisposer = (): void => {}
-
 // Stubs for handlers not yet ported (fonts, i18n, cmd, ripgrep, uploader) —
 // they resolve to benign defaults so the renderer can still boot. Each is a
 // later-phase TODO.
@@ -157,13 +155,13 @@ const i18nUtilsAPI: I18nUtilsAPI = {
   loadTranslations: () => Promise.resolve({})
 }
 const ripgrepAPI: RipgrepAPI = {
-  start: () => Promise.resolve({ searchId: '' }),
-  cancel: noopDisposer,
-  onMatch: () => noopDisposer,
-  onProgress: () => noopDisposer,
-  onDone: () => noopDisposer,
-  onError: () => noopDisposer,
-  onCancelled: () => noopDisposer
+  start: (req) => invoke('mt::rg::start', req) as Promise<{ searchId: string }>,
+  cancel: (searchId) => send('mt::rg::cancel', searchId),
+  onMatch: (h) => ipcRenderer.on('mt::rg::match', (_e, p) => h(p)),
+  onProgress: (h) => ipcRenderer.on('mt::rg::progress', (_e, p) => h(p)),
+  onDone: (h) => ipcRenderer.on('mt::rg::done', (_e, p) => h(p)),
+  onError: (h) => ipcRenderer.on('mt::rg::error', (_e, p) => h(p)),
+  onCancelled: (h) => ipcRenderer.on('mt::rg::cancelled', (_e, p) => h(p))
 }
 const uploaderAPI: UploaderAPI = {
   uploadImage: () => Promise.reject(new Error('uploader not implemented under Tauri yet'))
