@@ -43,6 +43,7 @@ pub fn run() {
         .manage(commands::context_menu::PopupMenuState::default())
         .manage(menu::MenuState::default())
         .manage(commands::editor::PendingOpen::from_args())
+        .manage(commands::watcher::WatcherState::default())
         .on_menu_event(|app, event| {
             menu::handle_menu_event(app, event.id().as_ref());
         })
@@ -56,6 +57,7 @@ pub fn run() {
                 log::error!("data center init failed: {e}");
             }
             app.set_menu(menu::build_menu(handle)?)?;
+            commands::watcher::init(handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

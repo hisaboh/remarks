@@ -153,6 +153,23 @@ fn emit_open_tab(window: &WebviewWindow, doc: MarkdownDocument, options: Value, 
     let _ = window.emit_to(window.label(), "mt::open-new-tab", json!([doc, options, selected]));
 }
 
+/// Whether a path has a markdown extension (shared with the file watcher).
+pub fn is_markdown_path(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|ext| MARKDOWN_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Build the `MarkdownDocument` for a path and return it as a JSON value (used by
+/// the file watcher's change payload — 4f). Keeps `MarkdownDocument` private.
+pub fn build_document_json(app: &AppHandle, pathname: &str) -> Result<Value, String> {
+    let store = app.store(PREFERENCES_FILE).map_err(to_err)?;
+    let doc = build_document(&store, pathname)?;
+    serde_json::to_value(doc).map_err(|e| e.to_string())
+}
+
 /// Build a document for a known path and open it in `window` (used by the
 /// macOS Opened handler — 4e). Errors are logged, not surfaced.
 pub fn open_path_in_window(app: &AppHandle, window: &WebviewWindow, pathname: &str, selected: bool) {
@@ -164,7 +181,10 @@ pub fn open_path_in_window(app: &AppHandle, window: &WebviewWindow, pathname: &s
         }
     };
     match build_document(&store, pathname) {
-        Ok(doc) => emit_open_tab(window, doc, json!({}), selected),
+        Ok(doc) => {
+            emit_open_tab(window, doc, json!({}), selected);
+            crate::commands::watcher::watch_file(app, pathname);
+        }
         Err(e) => log::error!("open {pathname} failed: {e}"),
     }
 }
@@ -181,6 +201,7 @@ pub fn file_open_path(
     let store = app.store(PREFERENCES_FILE).map_err(to_err)?;
     let doc = build_document(&store, &pathname)?;
     emit_open_tab(&window, doc, options.unwrap_or_else(|| json!({})), true);
+    crate::commands::watcher::watch_file(&app, &pathname);
     Ok(())
 }
 
@@ -212,7 +233,10 @@ pub fn file_open(app: AppHandle, window: WebviewWindow) {
                 let pathname = path.to_string_lossy().into_owned();
                 match build_document(&store, &pathname) {
                     // Only the first opened file becomes the active tab.
-                    Ok(doc) => emit_open_tab(&window, doc, json!({}), index == 0),
+                    Ok(doc) => {
+                        emit_open_tab(&window, doc, json!({}), index == 0);
+                        crate::commands::watcher::watch_file(&app_cb, &pathname);
+                    }
                     Err(e) => log::error!("failed to open {pathname}: {e}"),
                 }
             }
@@ -304,7 +328,10 @@ fn ensure_extension(path: String) -> String {
 /// new/changed path, tab-saved otherwise; tab-save-failure on error).
 fn write_and_react(window: &WebviewWindow, id: &str, file_path: &str, markdown: &str, options: &Value, emit_pathname: bool) {
     let label = window.label();
+    let app = window.app_handle();
     let bytes = encode_markdown(markdown, options);
+    // Suppress the watcher's change event for our own write (4f).
+    crate::commands::watcher::ignore_change(&app, file_path);
     match std::fs::write(file_path, bytes) {
         Ok(()) => {
             if emit_pathname {
@@ -316,7 +343,9 @@ fn write_and_react(window: &WebviewWindow, id: &str, file_path: &str, markdown: 
             } else {
                 let _ = window.emit_to(label, "mt::tab-saved", id);
             }
-            // TODO(phase-4): window-add-file-path / recently-used / watcher hooks.
+            // Watch the (possibly new) path for external changes (4f).
+            crate::commands::watcher::watch_file(&app, file_path);
+            // TODO(phase-4): window-add-file-path / recently-used hooks.
         }
         Err(e) => {
             log::error!("save failed for {file_path}: {e}");

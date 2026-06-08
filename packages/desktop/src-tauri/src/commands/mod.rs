@@ -25,4 +25,5 @@ pub mod keybindings;
 pub mod paths;
 pub mod preferences;
 pub mod shell;
+pub mod watcher;
 pub mod window;
