@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, TitleBarStyle, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 use tauri_plugin_store::StoreExt;
 
@@ -190,7 +190,11 @@ fn create_or_focus(app: &AppHandle, kind: &str, category: Option<String>) -> Res
     let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(title)
         .inner_size(width, height)
-        .min_inner_size(600.0, 400.0);
+        .min_inner_size(600.0, 400.0)
+        // Frameless-overlay like the Electron build: traffic lights float over a
+        // content area that fills the window; the renderer draws its own title bar.
+        .title_bar_style(TitleBarStyle::Overlay)
+        .hidden_title(true);
     // Cascade editor windows; settings is a singleton, leave it centered (4h).
     if kind != "settings" {
         if let Some((x, y)) = cascade_position(app) {
