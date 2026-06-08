@@ -204,6 +204,65 @@ export class Muya {
         this.editor.setContent(content, autoFocus);
     }
 
+    /**
+     * Update editor options at runtime (mirrors marktext muyajs `setOptions`):
+     * merges `options` into `muya.options`, reflects the container-level ones
+     * (spellcheck, quick-insert hint), and — when `forceRender` is set — fully
+     * re-renders the document from its current state so render-affecting
+     * options (superSubScript, footnote, disableHtml, frontmatterType,
+     * codeBlockLineNumbers, GitLab compatibility, …) take effect. Unlike
+     * `setContent`, the undo history is preserved; the cursor is restored by path.
+     */
+    setOptions(options: Partial<IMuyaOptions>, forceRender = false) {
+        Object.assign(this.options, options);
+
+        if ('spellcheckEnabled' in options)
+            this.domNode.setAttribute('spellcheck', options.spellcheckEnabled ? 'true' : 'false');
+
+        if ('hideQuickInsertHint' in options) {
+            this.domNode.classList.toggle(
+                CLASS_NAMES.MU_SHOW_QUICK_INSERT_HINT,
+                !options.hideQuickInsertHint,
+            );
+        }
+
+        if (!forceRender)
+            return;
+
+        const selection = this.editor.selection.getSelection();
+        this.editor.scrollPage?.updateState(this.getState());
+        // Restore the caret on the rebuilt tree by resolving the block at the
+        // saved path and setting the cursor on it directly. (Passing only a
+        // path to setSelection does not work — Selection._setCursor needs a
+        // concrete block's domNode; a bare queryBlock result is not a Node.)
+        // Mirrors Editor.updateContents' same-block cursor restore.
+        if (selection && selection.isSelectionInSameBlock) {
+            const begin = Math.min(selection.anchor.offset, selection.focus.offset);
+            const end = Math.max(selection.anchor.offset, selection.focus.offset);
+            const cursorBlock = this.editor.scrollPage?.queryBlock(selection.anchorPath);
+            if (cursorBlock && cursorBlock.isContent())
+                cursorBlock.setCursor(begin, end, true);
+        }
+    }
+
+    /** Update the editor font size / line height (mirrors muyajs `setFont`). */
+    setFont({ fontSize, lineHeight }: { fontSize?: IMuyaOptions['fontSize']; lineHeight?: IMuyaOptions['lineHeight'] }) {
+        if (typeof fontSize === 'number')
+            this.options.fontSize = fontSize;
+        if (typeof lineHeight === 'number')
+            this.options.lineHeight = lineHeight;
+    }
+
+    /** Update the tab size used for indentation. */
+    setTabSize(tabSize: IMuyaOptions['tabSize']) {
+        this.options.tabSize = tabSize;
+    }
+
+    /** Update list indentation and re-render so it takes effect. */
+    setListIndentation(listIndentation: IMuyaOptions['listIndentation']) {
+        this.setOptions({ listIndentation }, true);
+    }
+
     focus() {
         this.editor.focus();
     }
