@@ -15,7 +15,7 @@ import StateToMarkdown from '../state/stateToMarkdown';
 import { isAnyListState, isParagraphState } from '../state/types';
 import { deepClone, isClipboardEvent, isKeyboardEvent } from '../utils';
 import { getClipBoardHtml } from '../utils/marked';
-import { getCopyTextType, isStandaloneTableHtml, normalizePastedHTML } from '../utils/paste';
+import { getCopyTextType, isStandaloneTableHtml, normalizePastedHTML, resolveClipboardImagePath } from '../utils/paste';
 import { mergePasteIntoHeading } from './mergePasteIntoHeading';
 
 class Clipboard {
@@ -585,7 +585,19 @@ class Clipboard {
     }
 
     // eslint-disable-next-line complexity
-    async pasteHandler(event: ClipboardEvent): Promise<void> {
+    async pasteHandler(
+        event: ClipboardEvent,
+        // `event.clipboardData` is only valid synchronously while the paste
+        // event is being dispatched. Once `pasteHandler` yields at its first
+        // `await` (the `clipboardFilePath` hook), the browser may detach the
+        // DataTransfer and subsequent `getData()` calls return ''. We snapshot
+        // text/html synchronously below and thread the snapshot through the
+        // `!isSelectionInSameBlock` recursion via these optional params so the
+        // re-entry doesn't read a detached clipboard. Mirrors the legacy
+        // `@muyajs` `pasteHandler(event, type, rawText, rawHtml)` signature.
+        rawText?: string,
+        rawHtml?: string,
+    ): Promise<void> {
         event.preventDefault();
         event.stopPropagation();
 
@@ -604,17 +616,35 @@ class Clipboard {
 
         const { isSelectionInSameBlock, anchorBlock } = selection;
 
-        if (!isSelectionInSameBlock) {
-            this.cutHandler();
-
-            return this.pasteHandler(event);
-        }
-
         if (!anchorBlock || !event.clipboardData)
             return;
 
-        const text = event.clipboardData.getData('text/plain');
-        let html = event.clipboardData.getData('text/html');
+        // Snapshot everything we need from `event.clipboardData`
+        // synchronously, BEFORE any `await` — after the first yield the
+        // DataTransfer can be detached and `getData()` returns ''. On the
+        // `!isSelectionInSameBlock` recursion we reuse the snapshot captured
+        // by the outer call rather than re-reading the (now possibly
+        // detached) clipboard.
+        const text = rawText ?? event.clipboardData.getData('text/plain');
+        let html = rawHtml ?? event.clipboardData.getData('text/html');
+
+        if (!isSelectionInSameBlock) {
+            this.cutHandler();
+
+            return this.pasteHandler(event, text, html);
+        }
+
+        // When the OS clipboard holds a file (e.g. an image copied from a
+        // file manager), let the embedder resolve it to a local path and
+        // insert it as an inline image, short-circuiting the text/HTML paste.
+        // Ported from the legacy `@muyajs` `clipboardFilePath` hook.
+        const imagePath = await resolveClipboardImagePath(
+            muya.options.clipboardFilePath,
+        );
+        if (imagePath) {
+            this.insertImagePath(anchorBlock, imagePath);
+            return;
+        }
 
         // Support pasted URLs from Firefox.
         if (URL_REG.test(text) && !/\s/.test(text) && !html)
@@ -738,6 +768,37 @@ class Clipboard {
 
             newBlock.lastContentInDescendant().setCursor(offset, offset, true);
         }
+    }
+
+    /**
+     * Insert a resolved clipboard file path as an inline image at the cursor.
+     *
+     * Inline images in muya are plain markdown text (`![](src)`) on a content
+     * block; rendering turns the token into an image. We splice the image
+     * markdown into the anchor block at the current selection (replacing any
+     * collapsed/expanded range) and place the cursor after it. The src is
+     * escaped the same way as {@link Format.replaceImage} so spaces and `#`
+     * survive in the path.
+     */
+    private insertImagePath(anchorBlock: Content, src: string): void {
+        const cursor = anchorBlock.getCursor();
+        if (!cursor)
+            return;
+
+        const { start, end } = cursor;
+        const { text: content } = anchorBlock;
+        const escapedSrc = src
+            .replace(/ /g, encodeURI(' '))
+            .replace(/#/g, encodeURIComponent('#'));
+        const imageText = `![](${escapedSrc})`;
+
+        anchorBlock.text
+            = content.substring(0, start.offset)
+                + imageText
+                + content.substring(end.offset);
+
+        const offset = start.offset + imageText.length;
+        anchorBlock.setCursor(offset, offset, true);
     }
 
     copyAsMarkdown() {
