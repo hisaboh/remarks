@@ -51,6 +51,40 @@ impl WindowRegistry {
 // Main window is window id 1; runtime windows start at 2.
 static NEXT_WINDOW_ID: AtomicU32 = AtomicU32::new(2);
 
+/// Diagonal cascade step (logical px) for stacked new editor windows (4h).
+const CASCADE_OFFSET: f64 = 30.0;
+
+/// Cascade a new editor window off the currently focused window so they don't
+/// stack exactly on top of each other. Returns a logical (x, y), wrapping back
+/// to the monitor's top-left margin when the step would run off-screen. None
+/// when there's no reference window (let the OS place the first one).
+fn cascade_position(app: &AppHandle) -> Option<(f64, f64)> {
+    let reference = app
+        .webview_windows()
+        .into_values()
+        .find(|w| w.is_focused().unwrap_or(false))
+        .or_else(|| app.webview_windows().into_values().next())?;
+
+    let scale = reference.scale_factor().ok()?;
+    let pos = reference.outer_position().ok()?.to_logical::<f64>(scale);
+    let mut x = pos.x + CASCADE_OFFSET;
+    let mut y = pos.y + CASCADE_OFFSET;
+
+    // Wrap to the monitor's top-left margin if the next step would push the
+    // title bar off the work area.
+    if let Ok(Some(monitor)) = reference.current_monitor() {
+        let m_pos = monitor.position().to_logical::<f64>(scale);
+        let m_size = monitor.size().to_logical::<f64>(scale);
+        if x + CASCADE_OFFSET > m_pos.x + m_size.width
+            || y + CASCADE_OFFSET > m_pos.y + m_size.height
+        {
+            x = m_pos.x + CASCADE_OFFSET;
+            y = m_pos.y + CASCADE_OFFSET;
+        }
+    }
+    Some((x, y))
+}
+
 fn pref_str<R: tauri::Runtime>(app: &AppHandle<R>, key: &str, default: &str) -> String {
     app.store(PREFERENCES_FILE)
         .ok()
@@ -153,12 +187,17 @@ fn create_or_focus(app: &AppHandle, kind: &str, category: Option<String>) -> Res
         .unwrap()
         .insert(label.clone(), WinArgs { window_id: id, win_type });
 
-    WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+    let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(title)
         .inner_size(width, height)
-        .min_inner_size(600.0, 400.0)
-        .build()
-        .map_err(|e| e.to_string())?;
+        .min_inner_size(600.0, 400.0);
+    // Cascade editor windows; settings is a singleton, leave it centered (4h).
+    if kind != "settings" {
+        if let Some((x, y)) = cascade_position(app) {
+            builder = builder.position(x, y);
+        }
+    }
+    builder.build().map_err(|e| e.to_string())?;
     Ok(())
 }
 
