@@ -15,13 +15,17 @@
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri_plugin_dialog::DialogExt;
 
 use notify_debouncer_full::notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
+
+/// Directory names skipped while scanning/watching a project folder.
+const SKIP_DIRS: &[&str] = &["node_modules", ".git"];
 
 /// How long a self-save suppresses change events for a path. Generous to cover
 /// the debounce window plus filesystem/cloud settling (cf. Electron's 1.3s).
@@ -36,6 +40,10 @@ pub struct WatcherState {
     debouncer: Mutex<Option<FullDebouncer>>,
     watched: Mutex<HashSet<String>>,
     ignore: Mutex<Vec<(String, Instant)>>,
+    /// The sidebar project: (root path, owning window label). Events under the
+    /// root become `mt::update-object-tree` (sidebar tree); others stay
+    /// `mt::update-file` (open files). One project at a time (last opened).
+    project: Mutex<Option<(String, String)>>,
 }
 
 /// Create the shared debouncer (call once in setup, after the app handle exists).
@@ -60,6 +68,20 @@ pub fn init(app: &AppHandle) {
             };
             let Some(path) = event.paths.last() else { continue };
             let pathname = path.to_string_lossy().into_owned();
+            // Route paths under the open project folder to the sidebar tree;
+            // everything else is an open-file watch.
+            let project = handler_app
+                .state::<WatcherState>()
+                .project
+                .lock()
+                .unwrap()
+                .clone();
+            if let Some((root, label)) = project {
+                if pathname.starts_with(&root) {
+                    handle_tree_event(&handler_app, &label, kind, &pathname);
+                    continue;
+                }
+            }
             if !crate::commands::files::is_markdown_path(&pathname) {
                 continue;
             }
@@ -142,4 +164,139 @@ fn handle_event(app: &AppHandle, kind: &str, pathname: &str) {
         "mtimeMs": mtime_ms(pathname),
     });
     let _ = app.emit("mt::update-file", json!({ "type": kind, "change": change }));
+}
+
+// ---- sidebar project folder (open-folder + directory tree watch) ------------
+
+/// `mt::ask-for-open-project-in-sidebar` / `mt::cmd-open-folder` — pick a folder
+/// (non-blocking) then load it as the sidebar project: emit `mt::open-directory`
+/// (sets the root) and start watching it (the initial scan populates the tree).
+#[tauri::command]
+pub fn project_open(app: AppHandle, window: WebviewWindow) {
+    let app_cb = app.clone();
+    app.dialog().file().pick_folder(move |folder| {
+        let Some(path) = folder.and_then(|fp| fp.into_path().ok()) else {
+            return; // cancelled
+        };
+        load_project(&app_cb, &window, &path.to_string_lossy());
+    });
+}
+
+/// Set `root` as the sidebar project for `window`: emit `mt::open-directory`
+/// (sets the tree root), start the recursive watch, and scan to populate.
+fn load_project(app: &AppHandle, window: &WebviewWindow, root: &str) {
+    let label = window.label().to_string();
+    *app.state::<WatcherState>().project.lock().unwrap() = Some((root.to_string(), label.clone()));
+    let _ = window.emit_to(&label, "mt::open-directory", root);
+    watch_dir(app, root);
+    scan_dir(app, &label, root);
+}
+
+/// Recursively watch a directory for changes (ongoing tree updates).
+fn watch_dir(app: &AppHandle, root: &str) {
+    let state = app.state::<WatcherState>();
+    let mut guard = state.debouncer.lock().unwrap();
+    if let Some(debouncer) = guard.as_mut() {
+        if let Err(e) = debouncer.watch(std::path::Path::new(root), RecursiveMode::Recursive) {
+            log::error!("watch dir {root} failed: {e}");
+        }
+    }
+}
+
+/// Initial recursive scan emitting addDir/add tree events so the sidebar
+/// populates (notify, unlike chokidar, doesn't replay existing entries).
+fn scan_dir(app: &AppHandle, label: &str, root: &str) {
+    let mut stack = vec![std::path::PathBuf::from(root)];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if ft.is_dir() {
+                if SKIP_DIRS.contains(&name.as_str()) {
+                    continue;
+                }
+                emit_tree(app, label, "addDir", json!({ "pathname": path.to_string_lossy() }));
+                stack.push(path);
+            } else if ft.is_file() {
+                let p = path.to_string_lossy().into_owned();
+                if crate::commands::files::is_markdown_path(&p) {
+                    emit_tree(app, label, "add", file_change(&p, &name));
+                }
+            }
+        }
+    }
+}
+
+/// Map an ongoing watch event under the project root to a tree update.
+fn handle_tree_event(app: &AppHandle, label: &str, kind: &str, pathname: &str) {
+    let path = std::path::Path::new(pathname);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if SKIP_DIRS.contains(&name.as_str()) {
+        return;
+    }
+    match kind {
+        "add" => match std::fs::metadata(pathname) {
+            // Create: distinguish dir vs markdown file by stat.
+            Ok(meta) if meta.is_dir() => {
+                emit_tree(app, label, "addDir", json!({ "pathname": pathname }))
+            }
+            Ok(_) if crate::commands::files::is_markdown_path(pathname) => {
+                emit_tree(app, label, "add", file_change(pathname, &name))
+            }
+            _ => {}
+        },
+        "change" => {
+            if crate::commands::files::is_markdown_path(pathname) {
+                emit_tree(
+                    app,
+                    label,
+                    "change",
+                    json!({ "pathname": pathname, "mtimeMs": mtime_ms(pathname) }),
+                );
+            }
+        }
+        "unlink" => {
+            // The path is gone; can't stat. Markdown extension ⇒ file, else dir.
+            // The renderer no-ops if the kind doesn't match a tree node.
+            let tree_kind = if crate::commands::files::is_markdown_path(pathname) {
+                "unlink"
+            } else {
+                "unlinkDir"
+            };
+            emit_tree(app, label, tree_kind, json!({ "pathname": pathname }));
+        }
+        _ => {}
+    }
+}
+
+fn emit_tree(app: &AppHandle, label: &str, kind: &str, change: serde_json::Value) {
+    let _ = app.emit_to(
+        label,
+        "mt::update-object-tree",
+        json!({ "type": kind, "change": change }),
+    );
+}
+
+/// Tree-node metadata for an `add` event (no file content — addFile ignores it).
+fn file_change(pathname: &str, name: &str) -> serde_json::Value {
+    let meta = std::fs::metadata(pathname).ok();
+    let birth = meta
+        .as_ref()
+        .and_then(|m| m.created().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs_f64() * 1000.0);
+    json!({
+        "pathname": pathname,
+        "name": name,
+        "isFile": true,
+        "isDirectory": false,
+        "isMarkdown": true,
+        "birthTime": birth,
+        "mtimeMs": mtime_ms(pathname),
+    })
 }

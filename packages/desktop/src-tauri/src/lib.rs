@@ -111,6 +111,8 @@ pub fn run() {
             // user keybindings (Phase 4d)
             commands::keybindings::keybindings_get_user,
             commands::keybindings::keybindings_save_user,
+            // sidebar project folder (open-folder + directory tree watch)
+            commands::watcher::project_open,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,

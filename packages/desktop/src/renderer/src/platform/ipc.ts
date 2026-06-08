@@ -99,7 +99,10 @@ const SEND_MAP: Record<string, CmdSpec> = {
     command: 'menu_update_line_ending',
     params: ['_wid', 'lineEnding']
   },
-  'mt::update-sidebar-menu': { command: 'menu_update_sidebar', params: ['_wid', 'visible'] }
+  'mt::update-sidebar-menu': { command: 'menu_update_sidebar', params: ['_wid', 'visible'] },
+  // Open a folder as the sidebar project (sidebar button + command/menu).
+  'mt::ask-for-open-project-in-sidebar': { command: 'project_open' },
+  'mt::cmd-open-folder': { command: 'project_open' }
 }
 
 // Built-in Tauri window controls — handled without a custom Rust command.
