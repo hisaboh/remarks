@@ -90,7 +90,15 @@ const SEND_MAP: Record<string, CmdSpec> = {
   // Window close flow (Phase 4).
   'mt::cmd-close-window': { command: 'window_request_close' },
   'mt::close-window': { command: 'window_close' },
-  'mt::close-window-confirm': { command: 'window_close_confirm', params: ['unsavedFiles'] }
+  'mt::close-window-confirm': { command: 'window_close_confirm', params: ['unsavedFiles'] },
+  // Menu checkbox/radio state sync (Phase 4a). First arg is the windowId, which
+  // the single global macOS menu ignores — '_wid' is a throwaway param name.
+  'mt::update-format-menu': { command: 'menu_update_format', params: ['_wid', 'formats'] },
+  'mt::update-line-ending-menu': {
+    command: 'menu_update_line_ending',
+    params: ['_wid', 'lineEnding']
+  },
+  'mt::update-sidebar-menu': { command: 'menu_update_sidebar', params: ['_wid', 'visible'] }
 }
 
 // Built-in Tauri window controls — handled without a custom Rust command.

@@ -30,6 +30,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(commands::window::WindowRegistry::default())
         .manage(commands::context_menu::PopupMenuState::default())
+        .manage(menu::MenuState::default())
         .on_menu_event(|app, event| {
             menu::handle_menu_event(app, event.id().as_ref());
         })
@@ -82,6 +83,10 @@ pub fn run() {
             // context menu (Phase 4)
             commands::context_menu::menu_popup,
             commands::context_menu::menu_popup_application,
+            // menu state sync (Phase 4a)
+            menu::menu_update_format,
+            menu::menu_update_line_ending,
+            menu::menu_update_sidebar,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,
