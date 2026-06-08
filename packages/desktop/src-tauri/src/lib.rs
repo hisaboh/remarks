@@ -114,6 +114,7 @@ pub fn run() {
             commands::keybindings::keybindings_save_user,
             // sidebar project folder (open-folder + directory tree watch)
             commands::watcher::project_open,
+            commands::watcher::project_open_path,
             // ripgrep search
             commands::search::rg_start,
             commands::search::rg_cancel,

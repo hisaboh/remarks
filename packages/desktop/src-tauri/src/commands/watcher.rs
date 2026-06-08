@@ -182,6 +182,12 @@ pub fn project_open(app: AppHandle, window: WebviewWindow) {
     });
 }
 
+/// Open a known folder as the sidebar project (e.g. dropped onto the window).
+#[tauri::command]
+pub fn project_open_path(app: AppHandle, window: WebviewWindow, path: String) {
+    load_project(&app, &window, &path);
+}
+
 /// Set `root` as the sidebar project for `window`: emit `mt::open-directory`
 /// (sets the tree root), start the recursive watch, and scan to populate.
 fn load_project(app: &AppHandle, window: &WebviewWindow, root: &str) {

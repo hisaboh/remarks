@@ -23,6 +23,7 @@ import {
 } from './ipc'
 import { installKeybindings, getKeybindingMap, setUserKeybindings } from '../keybinding'
 import { installDragRegion } from './dragRegion'
+import { installFileDrop } from './fileDrop'
 
 export const isTauri = (): boolean => '__TAURI_INTERNALS__' in window
 
@@ -258,6 +259,9 @@ export const initPlatform = async (): Promise<void> => {
   // Window dragging via data-tauri-drag-region (Tauri's own handler doesn't
   // fire here — see dragRegion.ts).
   installDragRegion()
+
+  // Open files/folders dropped onto the window (native paths, not HTML DnD).
+  installFileDrop()
 
   // Arm the bootstrap handshake before the editor store (loaded with the Vue
   // app) attaches its listener.

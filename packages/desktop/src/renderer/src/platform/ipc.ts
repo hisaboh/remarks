@@ -105,6 +105,7 @@ const SEND_MAP: Record<string, CmdSpec> = {
   // Open a folder as the sidebar project (sidebar button + command/menu).
   'mt::ask-for-open-project-in-sidebar': { command: 'project_open' },
   'mt::cmd-open-folder': { command: 'project_open' },
+  'mt::open-folder-path': { command: 'project_open_path', params: ['path'] },
   'mt::rg::cancel': { command: 'rg_cancel', params: ['searchId'] }
 }
 
