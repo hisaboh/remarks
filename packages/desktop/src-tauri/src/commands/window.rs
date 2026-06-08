@@ -16,7 +16,7 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 use tauri_plugin_store::StoreExt;
 
 use crate::commands::preferences::PREFERENCES_FILE;
@@ -177,47 +177,55 @@ pub fn window_request_close(window: WebviewWindow) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Mark the window as closing (so the CloseRequested handler lets it through)
+/// and close it for real.
+pub fn mark_and_close(app: &AppHandle, window: &WebviewWindow) {
+    app.state::<WindowRegistry>().mark_closing(window.label());
+    if let Err(e) = window.close() {
+        log::error!("close failed for {}: {e}", window.label());
+    }
+}
+
 /// Renderer confirmed there's nothing to save — close for real.
 #[tauri::command]
 pub fn window_close(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    app.state::<WindowRegistry>().mark_closing(window.label());
-    window.close().map_err(|e| e.to_string())
+    mark_and_close(&app, &window);
+    Ok(())
 }
 
-/// Renderer reported unsaved files — confirm before discarding.
-///
-/// TODO(phase-4): tauri-plugin-dialog has no 3-button dialog, so this is a
-/// 2-button discard/cancel prompt. A proper Save / Don't Save / Cancel flow
-/// (saving each unsaved file, prompting a path for untitled ones) needs a
-/// custom in-renderer dialog or a native muda menu.
+const SAVE_LABEL: &str = "Save";
+const DONT_SAVE_LABEL: &str = "Don't Save";
+
+/// Renderer reported unsaved files — show the Save / Don't Save / Cancel prompt
+/// (4c). Save writes each unsaved file (prompting a path for untitled ones) then
+/// closes; Don't Save closes immediately; Cancel keeps the window open.
 #[tauri::command]
-pub fn window_close_confirm(
-    app: AppHandle,
-    window: WebviewWindow,
-    unsaved_files: Value,
-) -> Result<(), String> {
+pub fn window_close_confirm(app: AppHandle, window: WebviewWindow, unsaved_files: Value) {
     let count = unsaved_files.as_array().map(|a| a.len()).unwrap_or(0);
     // NON-blocking dialog (see file_open): sync commands run on the main thread,
-    // and a blocking dialog there deadlocks the UI. Close in the callback.
+    // and a blocking dialog there deadlocks the UI. Decide in the callback.
     let app_cb = app.clone();
     app.dialog()
         .message(format!(
-            "You have {count} file(s) with unsaved changes. Close without saving?"
+            "You have {count} file(s) with unsaved changes. Do you want to save them before closing?"
         ))
         .title("Unsaved Changes")
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "Close without saving".into(),
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            SAVE_LABEL.into(),
+            DONT_SAVE_LABEL.into(),
             "Cancel".into(),
         ))
-        .show(move |confirmed| {
-            if confirmed {
-                app_cb
-                    .state::<WindowRegistry>()
-                    .mark_closing(window.label());
-                if let Err(e) = window.close() {
-                    log::error!("close confirm: {e}");
-                }
+        .show_with_result(move |res| {
+            // rfd returns Custom(label) for custom buttons; map Yes/No defensively.
+            let save = matches!(&res, MessageDialogResult::Yes)
+                || matches!(&res, MessageDialogResult::Custom(s) if s == SAVE_LABEL);
+            let dont_save = matches!(&res, MessageDialogResult::No)
+                || matches!(&res, MessageDialogResult::Custom(s) if s == DONT_SAVE_LABEL);
+            if save {
+                crate::commands::files::save_unsaved_and_close(app_cb, window, unsaved_files);
+            } else if dont_save {
+                mark_and_close(&app_cb, &window);
             }
+            // Cancel / dismissed → keep the window open.
         });
-    Ok(())
 }

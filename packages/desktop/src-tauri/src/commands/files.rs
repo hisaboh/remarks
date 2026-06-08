@@ -11,9 +11,10 @@
 //! `[markdownDocument, options, selected]` tuple the renderer expects (the shim
 //! spreads arrays into positional listener args).
 
+use std::collections::VecDeque;
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
@@ -398,4 +399,60 @@ pub fn file_save_as(
         }
     });
     Ok(())
+}
+
+// ---- save-on-close (4c) -----------------------------------------------------
+
+/// One entry of the `mt::close-window-confirm` unsaved-files payload.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct UnsavedFile {
+    id: String,
+    #[serde(default)]
+    filename: String,
+    #[serde(default)]
+    pathname: Option<String>,
+    #[serde(default)]
+    markdown: String,
+    #[serde(default)]
+    options: Value,
+    #[serde(default)]
+    default_path: Option<String>,
+}
+
+/// Save every unsaved file then close the window — the "Save" branch of the
+/// close confirm dialog (window.rs). Path-backed files are written in place;
+/// untitled files prompt a save dialog, processed one at a time. Cancelling an
+/// individual untitled dialog does NOT abort the close (matches upstream
+/// Electron behavior — `Promise.all(...).then(close)`).
+pub fn save_unsaved_and_close(app: AppHandle, window: WebviewWindow, unsaved: Value) {
+    let files: Vec<UnsavedFile> = serde_json::from_value(unsaved).unwrap_or_default();
+    process_save_queue(app, window, files.into());
+}
+
+fn process_save_queue(app: AppHandle, window: WebviewWindow, mut queue: VecDeque<UnsavedFile>) {
+    // Write all path-backed files synchronously up to the next untitled one.
+    while matches!(queue.front(), Some(f) if f.pathname.is_some()) {
+        let f = queue.pop_front().unwrap();
+        let file_path = ensure_extension(f.pathname.unwrap());
+        write_and_react(&window, &f.id, &file_path, &f.markdown, &f.options, false);
+    }
+    let Some(f) = queue.pop_front() else {
+        // Nothing left to save → close for real.
+        crate::commands::window::mark_and_close(&app, &window);
+        return;
+    };
+    // Untitled file → prompt for a path, write if chosen, then continue.
+    let recommend = if f.filename.is_empty() { "Untitled".to_string() } else { f.filename.clone() };
+    let dir = f.default_path.clone().unwrap_or_else(|| documents_dir(&app));
+    let default = format!("{dir}/{recommend}.md");
+    let app_next = app.clone();
+    let window_next = window.clone();
+    save_dialog(&app, &default, move |chosen| {
+        if let Some(file_path) = chosen {
+            let file_path = ensure_extension(file_path);
+            write_and_react(&window_next, &f.id, &file_path, &f.markdown, &f.options, true);
+        }
+        process_save_queue(app_next, window_next, queue);
+    });
 }
