@@ -9,6 +9,7 @@
       <div
         v-if="!showCustomTitleBar"
         class="title-bar"
+        data-tauri-drag-region
       />
       <router-view class="pref-setting" />
     </div>

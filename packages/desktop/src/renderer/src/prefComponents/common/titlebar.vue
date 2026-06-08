@@ -1,7 +1,11 @@
 <template>
-  <div class="title-bar">
+  <div
+    class="title-bar"
+    data-tauri-drag-region="deep"
+  >
     <div
       class="frameless-titlebar-button frameless-titlebar-close"
+      data-tauri-drag-region="false"
       @click.stop="handleCloseClick"
     >
       <div>

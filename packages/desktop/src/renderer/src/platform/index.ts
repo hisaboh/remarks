@@ -22,6 +22,7 @@ import {
   setKeybindingsResponder
 } from './ipc'
 import { installKeybindings, getKeybindingMap, setUserKeybindings } from '../keybinding'
+import { installDragRegion } from './dragRegion'
 
 export const isTauri = (): boolean => '__TAURI_INTERNALS__' in window
 
@@ -253,6 +254,10 @@ export const initPlatform = async (): Promise<void> => {
     nextTick: (fn: (...args: unknown[]) => void, ...args: unknown[]) =>
       Promise.resolve().then(() => fn(...args))
   }
+
+  // Window dragging via data-tauri-drag-region (Tauri's own handler doesn't
+  // fire here — see dragRegion.ts).
+  installDragRegion()
 
   // Arm the bootstrap handshake before the editor store (loaded with the Vue
   // app) attaches its listener.

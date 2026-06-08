@@ -6,6 +6,7 @@
     />
     <div
       class="title-bar"
+      data-tauri-drag-region="deep"
       :class="[
         { active: active },
         { 'tabs-visible': showTabBar },
@@ -33,6 +34,7 @@
           </span>
           <span
             class="filename"
+            data-tauri-drag-region="false"
             :class="{ isOsx: platform === 'darwin' }"
             @click="rename"
           >
@@ -44,7 +46,10 @@
           />
         </span>
       </div>
-      <div :class="showCustomTitleBar ? 'left-toolbar title-no-drag' : 'right-toolbar'">
+      <div
+        data-tauri-drag-region="false"
+        :class="showCustomTitleBar ? 'left-toolbar title-no-drag' : 'right-toolbar'"
+      >
         <div
           v-if="showCustomTitleBar"
           class="frameless-titlebar-menu title-no-drag"
@@ -81,6 +86,7 @@
       <div
         v-if="titleBarStyle === 'custom' && !isFullScreen && !isOsx"
         class="right-toolbar"
+        data-tauri-drag-region="false"
         :class="[{ 'title-no-drag': titleBarStyle === 'custom' }]"
       >
         <div
