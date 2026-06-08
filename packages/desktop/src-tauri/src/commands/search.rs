@@ -35,8 +35,19 @@ fn rg_path() -> String {
             return p;
         }
     }
-    // Dev: the @vscode/ripgrep binary bundled in the workspace node_modules.
-    // (Packaged builds should ship it via env/externalBin — Phase 6 TODO.)
+    // Bundled sidecar (Tauri externalBin) sits next to the executable as `rg`
+    // — both in `tauri dev` (target/debug/rg) and in the packaged app
+    // (Contents/MacOS/rg). Covers production.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let ext = if cfg!(windows) { "rg.exe" } else { "rg" };
+            let sidecar = dir.join(ext);
+            if sidecar.is_file() {
+                return sidecar.to_string_lossy().into_owned();
+            }
+        }
+    }
+    // Fallback for older dev checkouts: the @vscode/ripgrep binary in node_modules.
     if let Some(p) = find_bundled_rg() {
         return p;
     }

@@ -35,6 +35,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/rg"],
     "category": "Productivity",
     "copyright": "Copyright © MarkText contributors",
     "shortDescription": "A simple and elegant markdown editor.",
