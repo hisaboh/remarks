@@ -19,6 +19,17 @@ pub fn run() {
                     let _ = window.emit_to(window.label(), "mt::ask-for-close", ());
                 }
             }
+            // Window active-status sync (4b): port the Electron focus/blur →
+            // mt::window-active-status { status } that drives the renderer's
+            // windowActive flag (inactive-window UI dimming). Payload is the
+            // `{ status }` object the renderer narrows at the boundary.
+            if let WindowEvent::Focused(focused) = event {
+                let _ = window.emit_to(
+                    window.label(),
+                    "mt::window-active-status",
+                    serde_json::json!({ "status": *focused }),
+                );
+            }
         })
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
