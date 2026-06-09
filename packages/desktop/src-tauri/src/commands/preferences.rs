@@ -26,6 +26,34 @@ fn to_err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// Map the OS locale (e.g. "ja-JP", "zh-Hans-CN") to one of the app's bundled
+/// UI languages, mirroring Electron's `_initializeLanguage` (app/index.ts). Only
+/// locales with a `static/locales/<lang>.json` file are returned; everything
+/// else (including unmatched system locales) falls back to "en".
+fn detect_system_language() -> String {
+    let Some(locale) = sys_locale::get_locale() else {
+        return "en".into();
+    };
+    let lower = locale.to_lowercase();
+    // Region-specific Chinese variants first (order matters before the bare `zh`).
+    let lang = if lower.starts_with("zh-tw") || lower.starts_with("zh-hant") || lower.starts_with("zh-hk") {
+        "zh-TW"
+    } else if lower.starts_with("zh") {
+        "zh-CN"
+    } else {
+        match lower.split(['-', '_']).next().unwrap_or("") {
+            "ja" => "ja",
+            "ko" => "ko",
+            "fr" => "fr",
+            "de" => "de",
+            "es" => "es",
+            "pt" => "pt",
+            _ => "en",
+        }
+    };
+    lang.into()
+}
+
 /// Populate defaults / reconcile against the embedded default set. Mirrors
 /// `Preference.init()` — run from the Tauri `setup` hook before the renderer
 /// asks for preferences.
@@ -41,8 +69,13 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
         for (key, value) in &defaults {
             store.set(key, value.clone());
         }
-        // TODO(phase-i18n): first-run system-language detection (app.getLocale →
-        // supported list) — needs the i18n catalog ported first.
+        // First-run: pick the UI language from the OS locale (the default file
+        // ships "en"; override only when the system locale maps to another
+        // bundled catalog). Mirrors Electron's _initializeLanguage.
+        let lang = detect_system_language();
+        if lang != "en" {
+            store.set("language", Value::String(lang));
+        }
         // TODO(theming): first-run dark theme via nativeTheme.shouldUseDarkColors.
     } else {
         // Remove outdated settings no longer present in the defaults.
