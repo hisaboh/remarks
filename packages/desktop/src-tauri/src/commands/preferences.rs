@@ -65,6 +65,88 @@ fn system_is_dark(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
+/// Theme ids that are dark — ported from common/theme.ts
+/// (`railscastsThemes` + `oneDarkThemes`). Used to tell whether the currently
+/// selected `theme` matches the OS appearance.
+const DARK_THEME_IDS: &[&str] = &[
+    "dark", "material-dark", "dracula", "nord", "catppuccin-mocha", "gruvbox-dark",
+    "tokyo-night", "tokyo-night-storm", "solarized-dark", "ayu-dark", "ayu-mirage",
+    "everforest-dark", "rose-pine", "rose-pine-moon", "monokai-pro", "synthwave-84",
+    "horizon-dark", "palenight", "oxocarbon-dark", "kanagawa", "nightfox", "cyberdream",
+    "one-dark",
+];
+
+fn is_dark_theme_id(theme: &str) -> bool {
+    DARK_THEME_IDS.contains(&theme)
+}
+
+/// Read a string pref from the store, falling back to `default`.
+fn stored_str(app: &AppHandle, key: &str, default: &str) -> String {
+    app.store(PREFERENCES_FILE)
+        .ok()
+        .and_then(|s| s.get(key))
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| default.to_owned())
+}
+
+fn stored_bool(app: &AppHandle, key: &str, default: bool) -> bool {
+    app.store(PREFERENCES_FILE)
+        .ok()
+        .and_then(|s| s.get(key))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(default)
+}
+
+/// When following the system theme, the concrete theme to use right now.
+fn follow_target(app: &AppHandle, light: &str, dark: &str) -> String {
+    if system_is_dark(app) { dark.to_owned() } else { light.to_owned() }
+}
+
+/// Mirror Electron's `broadcast-preferences-changed` theme handling: when the
+/// user enables followSystemTheme, or edits the light/dark-mode theme while
+/// following the system, recompute `theme` to match the OS and fold it into the
+/// same write+broadcast (`settings`).
+fn apply_theme_reactions(app: &AppHandle, settings: &mut Map<String, Value>) {
+    let enabling_follow =
+        settings.get("followSystemTheme").and_then(Value::as_bool) == Some(true);
+    let following = stored_bool(app, "followSystemTheme", false);
+    let mode_changed =
+        settings.contains_key("lightModeTheme") || settings.contains_key("darkModeTheme");
+
+    if !(enabling_follow || (following && mode_changed)) {
+        return;
+    }
+    // Prefer the incoming light/dark-mode values over the persisted ones.
+    let pick = |key: &str, default: &str| -> String {
+        settings
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| stored_str(app, key, default))
+    };
+    let (light, dark) = (pick("lightModeTheme", "light"), pick("darkModeTheme", "dark"));
+    let target = follow_target(app, &light, &dark);
+    settings.insert("theme".to_owned(), Value::String(target));
+}
+
+/// React to an OS appearance change (Tauri `WindowEvent::ThemeChanged`): if
+/// following the system theme, switch `theme` to the matching light/dark theme.
+/// Ports Electron's `nativeTheme.on('updated')` handler. The dedup (target ==
+/// current) keeps the per-window event from re-broadcasting once it's applied.
+pub fn on_system_theme_changed(app: &AppHandle, is_dark: bool) {
+    if !stored_bool(app, "followSystemTheme", false) {
+        return;
+    }
+    let light = stored_str(app, "lightModeTheme", "light");
+    let dark = stored_str(app, "darkModeTheme", "dark");
+    let target = if is_dark { dark } else { light };
+    if target != stored_str(app, "theme", "light") {
+        let mut change = Map::new();
+        change.insert("theme".to_owned(), Value::String(target));
+        let _ = set_items_internal(app, change);
+    }
+}
+
 /// Populate defaults / reconcile against the embedded default set. Mirrors
 /// `Preference.init()` — run from the Tauri `setup` hook before the renderer
 /// asks for preferences.
@@ -112,25 +194,58 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
         }
     }
 
+    // Startup: when following the system theme, re-sync `theme` to the current OS
+    // appearance (mirrors Electron's ready()). No broadcast — the renderer reads
+    // the value on bootstrap.
+    if store
+        .get("followSystemTheme")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let current = store
+            .get("theme")
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "light".into());
+        let sys_dark = system_is_dark(app);
+        if is_dark_theme_id(&current) != sys_dark {
+            let light = store
+                .get("lightModeTheme")
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "light".into());
+            let dark = store
+                .get("darkModeTheme")
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "dark".into());
+            let target = if sys_dark { dark } else { light };
+            if target != current {
+                store.set("theme", Value::String(target));
+            }
+        }
+    }
+
     store.save().map_err(to_err)
 }
 
 /// Shared write path — persists each entry and broadcasts the changed subset.
-fn set_items_internal(app: &AppHandle, settings: &Map<String, Value>) -> Result<(), String> {
+fn set_items_internal(app: &AppHandle, mut settings: Map<String, Value>) -> Result<(), String> {
+    // React to theme-related changes before persisting so the recomputed `theme`
+    // is written and broadcast in the same pass (mirrors Electron's
+    // broadcast-preferences-changed handler).
+    apply_theme_reactions(app, &mut settings);
+
     let store = app.store(PREFERENCES_FILE).map_err(to_err)?;
-    for (key, value) in settings {
+    for (key, value) in &settings {
         store.set(key, value.clone());
     }
     store.save().map_err(to_err)?;
 
     // The title bar style can't change live, so it's never pushed to renderers.
-    let mut payload = settings.clone();
-    payload.remove("titleBarStyle");
-    if !payload.is_empty() {
-        let _ = app.emit("mt::user-preference", Value::Object(payload));
+    settings.remove("titleBarStyle");
+    if !settings.is_empty() {
+        let _ = app.emit("mt::user-preference", Value::Object(settings));
     }
-    // TODO(phase-4): main-side reactions to preference changes (menu rebuild,
-    // native theme) — see app/index.ts and menu/index.ts in the Electron tree.
+    // TODO(4j-menu): native menu rebuild on language/theme/autoSave pref changes
+    // (menu i18n) — see menu/index.ts; the locale catalog lives renderer-side.
     Ok(())
 }
 
@@ -146,7 +261,7 @@ pub fn preferences_get_all(app: AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn preferences_set_items(app: AppHandle, settings: Map<String, Value>) -> Result<(), String> {
-    set_items_internal(&app, &settings)
+    set_items_internal(&app, settings)
 }
 
 #[tauri::command]
@@ -159,5 +274,5 @@ pub fn preferences_toggle_autosave(app: AppHandle) -> Result<(), String> {
         .unwrap_or(false);
     let mut change = Map::new();
     change.insert("autoSave".into(), Value::Bool(!current));
-    set_items_internal(&app, &change)
+    set_items_internal(&app, change)
 }

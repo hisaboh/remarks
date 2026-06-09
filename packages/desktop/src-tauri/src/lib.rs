@@ -35,6 +35,16 @@ pub fn run() {
                     serde_json::json!({ "status": *focused }),
                 );
             }
+            // 4j theme reaction: when the OS switches dark/light and the user is
+            // following the system theme, re-select the matching theme. Ports
+            // Electron's nativeTheme.on('updated'). Fires per window; the command
+            // dedups once the new theme is written.
+            if let WindowEvent::ThemeChanged(theme) = event {
+                commands::preferences::on_system_theme_changed(
+                    window.app_handle(),
+                    *theme == tauri::Theme::Dark,
+                );
+            }
         })
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
