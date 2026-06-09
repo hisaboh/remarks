@@ -77,6 +77,8 @@ const SEND_MAP: Record<string, CmdSpec> = {
   },
   // Closing tab(s) with unsaved changes → Save/Don't Save/Cancel then close.
   'mt::save-and-close-tabs': { command: 'save_and_close_tabs', params: ['unsavedFiles'] },
+  // Save All without closing (Save-All command / ASK_FOR_SAVE_ALL(false)).
+  'mt::save-tabs': { command: 'save_all_tabs', params: ['unsavedFiles'] },
   'mt::set-user-data': { command: 'data_center_set_items', params: ['settings'] },
   'set-image-folder-path': { command: 'data_center_set_image_folder_path', params: ['path'] },
   'mt::ask-for-modify-image-folder-path': {
@@ -204,6 +206,13 @@ export const send = (channel: string, ...args: unknown[]): void => {
   }
   if (channel === 'mt::request-keybindings') {
     keybindingsResponder?.()
+    return
+  }
+  // Initial language load (i18n/index.ts): reply with the configured locale.
+  if (channel === 'mt::get-current-language') {
+    void tauriInvoke('preferences_get_all').then((data) =>
+      emit('mt::current-language', (data as { language?: string })?.language || 'en')
+    )
     return
   }
   const spec = SEND_MAP[channel]

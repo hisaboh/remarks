@@ -153,8 +153,24 @@ const windowControlAPI: ElectronWindowControlAPI = {
 const commandExistsAPI: CommandExistsAPI = {
   exists: () => Promise.resolve(false)
 }
+// Locale JSON files (packages/desktop/static/locales/*.json), bundled lazily by
+// vite as separate chunks so only the requested locale is fetched at runtime —
+// mirrors Electron's main-process `loadTranslations` (common/i18n.ts) but served
+// from the renderer bundle, so no Rust/resource access is needed. `en` is
+// already statically imported by i18n/index.ts; the others load on demand.
+const localeModules = import.meta.glob<Record<string, unknown>>(
+  ['../../../../static/locales/*.json', '!../../../../static/locales/*.min.json'],
+  { import: 'default' }
+)
+
+const loadLocale = async (language: string): Promise<Record<string, unknown> | undefined> => {
+  const entry = Object.entries(localeModules).find(([p]) => p.endsWith(`/${language}.json`))
+  return entry ? await entry[1]() : undefined
+}
+
 const i18nUtilsAPI: I18nUtilsAPI = {
-  loadTranslations: () => Promise.resolve({})
+  loadTranslations: async (language) =>
+    (await loadLocale(language)) ?? (language === 'en' ? {} : (await loadLocale('en')) ?? {})
 }
 const ripgrepAPI: RipgrepAPI = {
   start: (req) => invoke('mt::rg::start', req) as Promise<{ searchId: string }>,
