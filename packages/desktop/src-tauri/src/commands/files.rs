@@ -590,6 +590,46 @@ pub fn save_and_close_tabs(app: AppHandle, window: WebviewWindow, unsaved_files:
         });
 }
 
+/// `mt::save-tabs` — Save-All without closing (the "Save All" menu/command,
+/// from `ASK_FOR_SAVE_ALL(false)`). Unlike save-and-close there is NO prompt:
+/// path-backed files are written in place and untitled files prompt a save
+/// dialog one at a time. The tabs stay open; `write_and_react` already emits
+/// `mt::tab-saved` / `mt::set-pathname` so the renderer clears the dirty state.
+#[tauri::command]
+pub fn save_all_tabs(app: AppHandle, window: WebviewWindow, unsaved_files: Value) {
+    let files: Vec<UnsavedFile> = serde_json::from_value(unsaved_files).unwrap_or_default();
+    if files.is_empty() {
+        return;
+    }
+    process_save_all_queue(app, window, files.into());
+}
+
+/// Save the queued files (path-backed in place, untitled via dialog) WITHOUT
+/// closing anything. Mirrors process_save_queue but the terminal action is a
+/// no-op instead of closing the window.
+fn process_save_all_queue(app: AppHandle, window: WebviewWindow, mut queue: VecDeque<UnsavedFile>) {
+    while matches!(queue.front(), Some(f) if f.pathname.is_some()) {
+        let f = queue.pop_front().unwrap();
+        let file_path = ensure_extension(f.pathname.unwrap());
+        write_and_react(&window, &f.id, &file_path, &f.markdown, &f.options, false);
+    }
+    let Some(f) = queue.pop_front() else {
+        return;
+    };
+    let recommend = recommend_filename(&f.markdown, &f.filename);
+    let dir = f.default_path.clone().unwrap_or_else(|| documents_dir(&app));
+    let default = format!("{dir}/{recommend}.md");
+    let app_next = app.clone();
+    let window_next = window.clone();
+    save_dialog(&app, &default, move |chosen| {
+        if let Some(file_path) = chosen {
+            let file_path = ensure_extension(file_path);
+            write_and_react(&window_next, &f.id, &file_path, &f.markdown, &f.options, true);
+        }
+        process_save_all_queue(app_next, window_next, queue);
+    });
+}
+
 /// Save the queued files (path-backed in place, untitled via dialog) and close
 /// the successfully-saved tabs. Mirrors process_save_queue but emits
 /// force-close-tabs-by-id instead of closing the window.
