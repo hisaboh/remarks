@@ -239,13 +239,18 @@ fn set_items_internal(app: &AppHandle, mut settings: Map<String, Value>) -> Resu
     }
     store.save().map_err(to_err)?;
 
+    // Rebuild the native menu so its labels pick up the new UI language (4j).
+    // Sync command → already on the main thread, safe for macOS menu mutation.
+    let language_changed = settings.contains_key("language");
+
     // The title bar style can't change live, so it's never pushed to renderers.
     settings.remove("titleBarStyle");
     if !settings.is_empty() {
         let _ = app.emit("mt::user-preference", Value::Object(settings));
     }
-    // TODO(4j-menu): native menu rebuild on language/theme/autoSave pref changes
-    // (menu i18n) — see menu/index.ts; the locale catalog lives renderer-side.
+    if language_changed {
+        crate::menu::rebuild_menu(app);
+    }
     Ok(())
 }
 

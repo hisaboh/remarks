@@ -22,6 +22,7 @@ use tauri::menu::{
     Submenu, SubmenuBuilder,
 };
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_store::StoreExt;
 
 /// Menu item id that opens the settings window (handled specially, not a
 /// renderer command).
@@ -144,8 +145,10 @@ fn refresh_recent_menu(app: &AppHandle) {
     let Some(submenu) = guard.as_ref() else { return };
     // Clear existing items.
     while let Ok(Some(_)) = submenu.remove_at(0) {}
+    let tr = Translator::for_app(app);
     let list = app.state::<RecentDocs>().0.lock().unwrap().clone();
     if list.is_empty() {
+        // No locale key for the empty-state placeholder; keep the English text.
         if let Ok(item) = MenuItemBuilder::with_id("recent:none", "No Recent Files")
             .enabled(false)
             .build(app)
@@ -167,9 +170,94 @@ fn refresh_recent_menu(app: &AppHandle) {
     if let Ok(sep) = PredefinedMenuItem::separator(app) {
         let _ = submenu.append(&sep);
     }
-    if let Ok(clear) = MenuItemBuilder::with_id(RECENT_CLEAR_ID, "Clear Recent Files").build(app) {
+    if let Ok(clear) =
+        MenuItemBuilder::with_id(RECENT_CLEAR_ID, tr.t("menu.file.clearRecentlyUsed")).build(app)
+    {
         let _ = submenu.append(&clear);
     }
+}
+
+/// Rebuild and re-apply the whole menu — used when the `language` preference
+/// changes so every label is re-translated. Resets the 4a checkbox state to
+/// unchecked (the renderer re-syncs it on the next selection/toggle); the recent
+/// list survives via [`RecentDocs`]. Must run on the main thread (macOS NSMenu).
+pub fn rebuild_menu(app: &AppHandle) {
+    match build_menu(app) {
+        Ok(menu) => {
+            if let Err(e) = app.set_menu(menu) {
+                log::error!("failed to apply rebuilt menu: {e}");
+            }
+        }
+        Err(e) => log::error!("failed to rebuild menu: {e}"),
+    }
+}
+
+// ---- menu i18n -------------------------------------------------------------
+// The menu is built in Rust, so its labels are translated here from the embedded
+// locale catalogs — the same `static/locales/*.json` the renderer uses — keyed
+// by the current `language` preference, with English as the fallback. The menu
+// is rebuilt by `rebuild_menu` whenever the language pref changes.
+
+macro_rules! locale_str {
+    ($file:literal) => {
+        include_str!(concat!("../../static/locales/", $file))
+    };
+}
+
+const LOCALES: &[(&str, &str)] = &[
+    ("en", locale_str!("en.json")),
+    ("zh-CN", locale_str!("zh-CN.json")),
+    ("zh-TW", locale_str!("zh-TW.json")),
+    ("ja", locale_str!("ja.json")),
+    ("ko", locale_str!("ko.json")),
+    ("fr", locale_str!("fr.json")),
+    ("de", locale_str!("de.json")),
+    ("es", locale_str!("es.json")),
+    ("pt", locale_str!("pt.json")),
+];
+
+/// Looks up dot-separated keys (e.g. `menu.file.newTab`) in a locale catalog,
+/// falling back to English, then to the key itself.
+struct Translator {
+    primary: serde_json::Value,
+    fallback: serde_json::Value,
+}
+
+impl Translator {
+    fn for_app(app: &AppHandle) -> Self {
+        let lang = app
+            .store(crate::commands::preferences::PREFERENCES_FILE)
+            .ok()
+            .and_then(|s| s.get("language"))
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "en".into());
+        Self::new(&lang)
+    }
+
+    fn new(lang: &str) -> Self {
+        let load = |l: &str| {
+            LOCALES
+                .iter()
+                .find(|(k, _)| *k == l)
+                .and_then(|(_, s)| serde_json::from_str(s).ok())
+                .unwrap_or(serde_json::Value::Null)
+        };
+        Self { primary: load(lang), fallback: load("en") }
+    }
+
+    fn t(&self, key: &str) -> String {
+        nav(&self.primary, key)
+            .or_else(|| nav(&self.fallback, key))
+            .unwrap_or_else(|| key.to_owned())
+    }
+}
+
+fn nav(value: &serde_json::Value, key: &str) -> Option<String> {
+    let mut cur = value;
+    for seg in key.split('.') {
+        cur = cur.get(seg)?;
+    }
+    cur.as_str().map(str::to_owned)
 }
 
 fn cmd(
@@ -203,98 +291,101 @@ fn check(
 }
 
 pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    // macOS application menu (About / Preferences / Quit).
-    let app_menu = SubmenuBuilder::new(app, "MarkText")
-        .item(&PredefinedMenuItem::about(app, None, None)?)
+    let tr = Translator::for_app(app);
+
+    // macOS application menu (About / Preferences / Quit). The About/Hide/Quit
+    // locale strings already include the app name (e.g. "Quit MarkText").
+    let app_menu = SubmenuBuilder::new(app, &tr.t("menu.marktext.title"))
+        .item(&PredefinedMenuItem::about(app, Some(&tr.t("menu.marktext.about")), None)?)
         .separator()
-        .item(&cmd(app, PREFERENCES_ID, "Preferences…", Some("CmdOrCtrl+,"))?)
+        .item(&cmd(app, PREFERENCES_ID, &tr.t("menu.marktext.preferences"), Some("CmdOrCtrl+,"))?)
         .separator()
-        .item(&PredefinedMenuItem::hide(app, None)?)
-        .item(&PredefinedMenuItem::hide_others(app, None)?)
-        .item(&PredefinedMenuItem::show_all(app, None)?)
+        .item(&PredefinedMenuItem::hide(app, Some(&tr.t("menu.marktext.hide")))?)
+        .item(&PredefinedMenuItem::hide_others(app, Some(&tr.t("menu.marktext.hideOthers")))?)
+        .item(&PredefinedMenuItem::show_all(app, Some(&tr.t("menu.marktext.showAll")))?)
         .separator()
-        .item(&PredefinedMenuItem::quit(app, None)?)
+        .item(&PredefinedMenuItem::quit(app, Some(&tr.t("menu.marktext.quit")))?)
         .build()?;
 
     // Radio-like line-ending submenu (state synced via menu_update_line_ending).
-    let line_ending_menu = SubmenuBuilder::new(app, "Line Ending")
-        .item(&check(app, LINE_ENDING_CRLF_ID, "Carriage Return and Line Feed (CRLF)", None)?)
-        .item(&check(app, LINE_ENDING_LF_ID, "Line Feed (LF)", None)?)
+    let line_ending_menu = SubmenuBuilder::new(app, &tr.t("menu.edit.lineEnding"))
+        .item(&check(app, LINE_ENDING_CRLF_ID, &tr.t("menu.edit.lineEndingCrlf"), None)?)
+        .item(&check(app, LINE_ENDING_LF_ID, &tr.t("menu.edit.lineEndingLf"), None)?)
         .build()?;
 
     // Dynamic "Open Recent" submenu (4g) — populated from the loaded list and
     // refreshed in place on open/save (stored in MenuState).
-    let open_recent = SubmenuBuilder::new(app, "Open Recent").build()?;
+    let open_recent = SubmenuBuilder::new(app, &tr.t("menu.file.openRecent")).build()?;
     *app.state::<MenuState>().open_recent.lock().unwrap() = Some(open_recent.clone());
     refresh_recent_menu(app);
 
-    let file_menu = SubmenuBuilder::new(app, "File")
-        .item(&cmd(app, "file.new-tab", "New Tab", Some("CmdOrCtrl+T"))?)
-        .item(&cmd(app, "file.new-window", "New Window", Some("CmdOrCtrl+Shift+N"))?)
+    let file_menu = SubmenuBuilder::new(app, &tr.t("menu.file.file"))
+        .item(&cmd(app, "file.new-tab", &tr.t("menu.file.newTab"), Some("CmdOrCtrl+T"))?)
+        .item(&cmd(app, "file.new-window", &tr.t("menu.file.newWindow"), Some("CmdOrCtrl+Shift+N"))?)
         .separator()
-        .item(&cmd(app, "file.open-file", "Open File…", Some("CmdOrCtrl+O"))?)
+        .item(&cmd(app, "file.open-file", &tr.t("menu.file.openFile"), Some("CmdOrCtrl+O"))?)
         .item(&open_recent)
         .separator()
-        .item(&cmd(app, "file.save", "Save", Some("CmdOrCtrl+S"))?)
-        .item(&cmd(app, "file.save-as", "Save As…", Some("CmdOrCtrl+Shift+S"))?)
+        .item(&cmd(app, "file.save", &tr.t("menu.file.save"), Some("CmdOrCtrl+S"))?)
+        .item(&cmd(app, "file.save-as", &tr.t("menu.file.saveAs"), Some("CmdOrCtrl+Shift+S"))?)
         .item(&line_ending_menu)
         .separator()
-        .item(&cmd(app, "file.close-tab", "Close Tab", Some("CmdOrCtrl+W"))?)
-        .item(&cmd(app, "file.close-window", "Close Window", Some("CmdOrCtrl+Shift+W"))?)
+        .item(&cmd(app, "file.close-tab", &tr.t("menu.file.closeTab"), Some("CmdOrCtrl+W"))?)
+        .item(&cmd(app, "file.close-window", &tr.t("menu.file.closeWindow"), Some("CmdOrCtrl+Shift+W"))?)
         .build()?;
 
     // Native editing roles + app find/replace commands.
-    let edit_menu = SubmenuBuilder::new(app, "Edit")
-        .item(&PredefinedMenuItem::undo(app, Some("Undo"))?)
-        .item(&PredefinedMenuItem::redo(app, Some("Redo"))?)
+    let edit_menu = SubmenuBuilder::new(app, &tr.t("menu.edit.edit"))
+        .item(&PredefinedMenuItem::undo(app, Some(&tr.t("menu.edit.undo")))?)
+        .item(&PredefinedMenuItem::redo(app, Some(&tr.t("menu.edit.redo")))?)
         .separator()
-        .item(&PredefinedMenuItem::cut(app, Some("Cut"))?)
-        .item(&PredefinedMenuItem::copy(app, Some("Copy"))?)
-        .item(&PredefinedMenuItem::paste(app, Some("Paste"))?)
-        .item(&PredefinedMenuItem::select_all(app, Some("Select All"))?)
+        .item(&PredefinedMenuItem::cut(app, Some(&tr.t("menu.edit.cut")))?)
+        .item(&PredefinedMenuItem::copy(app, Some(&tr.t("menu.edit.copy")))?)
+        .item(&PredefinedMenuItem::paste(app, Some(&tr.t("menu.edit.paste")))?)
+        .item(&PredefinedMenuItem::select_all(app, Some(&tr.t("menu.edit.selectAll")))?)
         .separator()
-        .item(&cmd(app, "edit.find", "Find", Some("CmdOrCtrl+F"))?)
-        .item(&cmd(app, "edit.replace", "Replace", Some("CmdOrCtrl+Option+F"))?)
+        .item(&cmd(app, "edit.find", &tr.t("menu.edit.find"), Some("CmdOrCtrl+F"))?)
+        .item(&cmd(app, "edit.replace", &tr.t("menu.edit.replace"), Some("CmdOrCtrl+Option+F"))?)
         .build()?;
 
-    let paragraph_menu = SubmenuBuilder::new(app, "Paragraph")
-        .item(&cmd(app, "paragraph.heading-1", "Heading 1", Some("CmdOrCtrl+1"))?)
-        .item(&cmd(app, "paragraph.heading-2", "Heading 2", Some("CmdOrCtrl+2"))?)
-        .item(&cmd(app, "paragraph.heading-3", "Heading 3", Some("CmdOrCtrl+3"))?)
-        .item(&cmd(app, "paragraph.heading-4", "Heading 4", Some("CmdOrCtrl+4"))?)
-        .item(&cmd(app, "paragraph.heading-5", "Heading 5", Some("CmdOrCtrl+5"))?)
-        .item(&cmd(app, "paragraph.heading-6", "Heading 6", Some("CmdOrCtrl+6"))?)
+    let paragraph_menu = SubmenuBuilder::new(app, &tr.t("menu.paragraph.paragraph"))
+        .item(&cmd(app, "paragraph.heading-1", &tr.t("menu.paragraph.heading1"), Some("CmdOrCtrl+1"))?)
+        .item(&cmd(app, "paragraph.heading-2", &tr.t("menu.paragraph.heading2"), Some("CmdOrCtrl+2"))?)
+        .item(&cmd(app, "paragraph.heading-3", &tr.t("menu.paragraph.heading3"), Some("CmdOrCtrl+3"))?)
+        .item(&cmd(app, "paragraph.heading-4", &tr.t("menu.paragraph.heading4"), Some("CmdOrCtrl+4"))?)
+        .item(&cmd(app, "paragraph.heading-5", &tr.t("menu.paragraph.heading5"), Some("CmdOrCtrl+5"))?)
+        .item(&cmd(app, "paragraph.heading-6", &tr.t("menu.paragraph.heading6"), Some("CmdOrCtrl+6"))?)
         .separator()
-        .item(&cmd(app, "paragraph.table", "Table", None)?)
-        .item(&cmd(app, "paragraph.code-fence", "Code Fence", None)?)
-        .item(&cmd(app, "paragraph.quote-block", "Quote Block", None)?)
-        .item(&cmd(app, "paragraph.order-list", "Ordered List", None)?)
-        .item(&cmd(app, "paragraph.bullet-list", "Bullet List", None)?)
-        .item(&cmd(app, "paragraph.task-list", "Task List", None)?)
-        .item(&cmd(app, "paragraph.horizontal-line", "Horizontal Line", None)?)
+        .item(&cmd(app, "paragraph.table", &tr.t("menu.paragraph.table"), None)?)
+        .item(&cmd(app, "paragraph.code-fence", &tr.t("menu.paragraph.codeFences"), None)?)
+        .item(&cmd(app, "paragraph.quote-block", &tr.t("menu.paragraph.quoteBlock"), None)?)
+        .item(&cmd(app, "paragraph.order-list", &tr.t("menu.paragraph.orderedList"), None)?)
+        .item(&cmd(app, "paragraph.bullet-list", &tr.t("menu.paragraph.bulletList"), None)?)
+        .item(&cmd(app, "paragraph.task-list", &tr.t("menu.paragraph.taskList"), None)?)
+        .item(&cmd(app, "paragraph.horizontal-line", &tr.t("menu.paragraph.horizontalRule"), None)?)
         .build()?;
 
     // Format marks are checkable (state synced via menu_update_format).
-    let format_menu = SubmenuBuilder::new(app, "Format")
-        .item(&check(app, "format.strong", "Strong", Some("CmdOrCtrl+B"))?)
-        .item(&check(app, "format.emphasis", "Emphasis", Some("CmdOrCtrl+I"))?)
-        .item(&cmd(app, "format.underline", "Underline", Some("CmdOrCtrl+U"))?)
-        .item(&check(app, "format.inline-code", "Inline Code", None)?)
-        .item(&check(app, "format.strike", "Strikethrough", None)?)
+    let format_menu = SubmenuBuilder::new(app, &tr.t("menu.format.format"))
+        .item(&check(app, "format.strong", &tr.t("menu.format.bold"), Some("CmdOrCtrl+B"))?)
+        .item(&check(app, "format.emphasis", &tr.t("menu.format.italic"), Some("CmdOrCtrl+I"))?)
+        .item(&cmd(app, "format.underline", &tr.t("menu.format.underline"), Some("CmdOrCtrl+U"))?)
+        .item(&check(app, "format.inline-code", &tr.t("menu.format.inlineCode"), None)?)
+        .item(&check(app, "format.strike", &tr.t("menu.format.strikethrough"), None)?)
         .separator()
-        .item(&check(app, "format.hyperlink", "Hyperlink", Some("CmdOrCtrl+L"))?)
-        .item(&check(app, "format.image", "Image", None)?)
+        .item(&check(app, "format.hyperlink", &tr.t("menu.format.hyperlink"), Some("CmdOrCtrl+L"))?)
+        .item(&check(app, "format.image", &tr.t("menu.format.image"), None)?)
         .separator()
-        .item(&cmd(app, "format.clear-format", "Clear Format", None)?)
+        .item(&cmd(app, "format.clear-format", &tr.t("menu.format.clearFormat"), None)?)
         .build()?;
 
-    let view_menu = SubmenuBuilder::new(app, "View")
-        .item(&check(app, SIDEBAR_ID, "Toggle Sidebar", None)?)
-        .item(&cmd(app, "view.toggle-tabbar", "Toggle Tab Bar", None)?)
+    let view_menu = SubmenuBuilder::new(app, &tr.t("menu.view.view"))
+        .item(&check(app, SIDEBAR_ID, &tr.t("menu.view.toggleSidebar"), None)?)
+        .item(&cmd(app, "view.toggle-tabbar", &tr.t("menu.view.toggleTabbar"), None)?)
         .build()?;
 
-    let window_menu = SubmenuBuilder::new(app, "Window")
-        .item(&PredefinedMenuItem::minimize(app, None)?)
+    let window_menu = SubmenuBuilder::new(app, &tr.t("menu.window.window"))
+        .item(&PredefinedMenuItem::minimize(app, Some(&tr.t("menu.window.minimize")))?)
         .item(&PredefinedMenuItem::maximize(app, None)?)
         .build()?;
 
