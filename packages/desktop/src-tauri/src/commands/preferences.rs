@@ -13,7 +13,7 @@
 
 use serde_json::{Map, Value};
 use std::collections::HashSet;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
 pub const PREFERENCES_FILE: &str = "preferences.json";
@@ -54,6 +54,17 @@ fn detect_system_language() -> String {
     lang.into()
 }
 
+/// Whether the OS is currently in dark mode, read from the main window's theme
+/// (config-defined windows exist by the time `setup`/`init` runs). Replaces
+/// Electron's `nativeTheme.shouldUseDarkColors`; defaults to light if the window
+/// or theme can't be resolved.
+fn system_is_dark(app: &AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|w| w.theme().ok())
+        .map(|t| t == tauri::Theme::Dark)
+        .unwrap_or(false)
+}
+
 /// Populate defaults / reconcile against the embedded default set. Mirrors
 /// `Preference.init()` — run from the Tauri `setup` hook before the renderer
 /// asks for preferences.
@@ -76,7 +87,11 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
         if lang != "en" {
             store.set("language", Value::String(lang));
         }
-        // TODO(theming): first-run dark theme via nativeTheme.shouldUseDarkColors.
+        // First-run: start in the dark theme when the OS is in dark mode (the
+        // default file ships "light"). Mirrors Electron's init.
+        if system_is_dark(app) {
+            store.set("theme", Value::String("dark".into()));
+        }
     } else {
         // Remove outdated settings no longer present in the defaults.
         let default_keys: HashSet<&String> = defaults.keys().collect();
