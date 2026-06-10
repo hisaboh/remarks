@@ -54,6 +54,8 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::default().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(commands::updater::UpdaterState::default())
         .manage(commands::window::WindowRegistry::default())
         .manage(commands::context_menu::PopupMenuState::default())
         .manage(menu::MenuState::default())
@@ -67,6 +69,9 @@ pub fn run() {
         .setup(|app| {
             // Seed/reconcile persisted settings before the renderer asks for them.
             let handle = app.handle();
+            // First-run only: import the Electron install's user data so the
+            // inits below reconcile it like any other upgrade (Phase 6).
+            commands::migration::import_electron_data(handle);
             if let Err(e) = commands::preferences::init(handle) {
                 log::error!("preferences init failed: {e}");
             }
@@ -138,6 +143,9 @@ pub fn run() {
             // ripgrep search
             commands::search::rg_start,
             commands::search::rg_cancel,
+            // auto-updater (Phase 6)
+            commands::updater::updater_check,
+            commands::updater::updater_need_update,
             // shell
             commands::shell::shell_open_external,
             commands::shell::shell_open_path,

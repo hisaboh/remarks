@@ -92,3 +92,55 @@
   1. Phase 0-1を最初の検証マイルストーンとし、「最小構成でビルド・起動・基本IPC疎通」を早期に確認
   2. Phase 5（WebKit互換性）は後回しにせず、早い段階で簡単なエディタ操作を動かして問題を洗い出す（過去の試作で問題が出た箇所のため）
   3. 既存Electronコードは並走させ（tauri2.0ブランチで段階的に置き換え）、機能パリティ達成後に削除
+---
+
+## Phase 6 実装メモ — 配布・署名・自動アップデート（2026-06-10 追記）
+
+### バージョン
+
+`tauri.conf.json` の `version` は `"../package.json"` を指す（単一ソース）。リリース時は
+`packages/desktop/package.json` の `version` を更新するだけでよい。
+
+### 自動アップデート（tauri-plugin-updater）
+
+- 構成: `tauri.conf.json` → `plugins.updater.pubkey` + `endpoints`
+  （GitHub Releases の `latest.json`: `https://github.com/marktext/marktext/releases/latest/download/latest.json`）、
+  `bundle.createUpdaterArtifacts: true`（`.app.tar.gz` + `.sig` + `latest.json` を生成）。
+- 鍵ペア: `pnpm exec tauri signer generate -w ~/.tauri/marktext.key` で生成済み。
+  **秘密鍵 `~/.tauri/marktext.key` は必ずバックアップすること**（紛失するとアップデート配信不能。
+  公開鍵を差し替えると既存インストールはアップデートを検証できなくなる）。
+  CI では secret `TAURI_SIGNING_PRIVATE_KEY` に秘密鍵の内容を設定する。
+- ローカルビルド: `pnpm build:tauri` は `scripts/build-tauri.mjs` 経由で、env 未設定なら
+  `~/.tauri/marktext.key` を自動使用する。
+- IPC フロー（Electron の `main/menu/actions/marktext.ts` と同一契約）:
+  renderer `mt::check-for-update` → Rust `updater_check` →
+  `mt::UPDATE_AVAILABLE` / `UPDATE_NOT_AVAILABLE` / `UPDATE_ERROR` 通知 →
+  renderer `mt::NEED_UPDATE {needUpdate}` → `updater_need_update` がダウンロード+インストール →
+  `mt::UPDATE_DOWNLOADED` → 約1.5秒後に再起動。ネイティブメニュー
+  「Check for Updates」(`app.check-updates`) からも起動可能。
+- リリース手順: `latest.json`（バンドラ生成物）と `.app.tar.gz` / `.sig` を GitHub Release の
+  アセットとしてアップロードする。`boot_info.is_updatable` はリリースビルドで true。
+
+### コード署名・公証（macOS）
+
+すべて環境変数駆動（Tauri bundler が自動検出。未設定なら署名なしでビルド成功）:
+
+- `APPLE_SIGNING_IDENTITY` — **"Developer ID Application: …" 証明書が必要**
+  （App Store 外配布・公証の必須要件。Apple Developer Program 加入が前提。
+  現状この開発機には "Apple Development" 証明書しかないため、配布署名は未設定）。
+- 公証: `APPLE_ID` + `APPLE_PASSWORD`（App用パスワード） + `APPLE_TEAM_ID`、
+  または `APPLE_API_ISSUER` + `APPLE_API_KEY`（App Store Connect APIキー）。
+  署名アイデンティティが設定されている場合に bundler が自動で公証を実行する。
+
+### 既存ユーザーの移行（Electron → Tauri）
+
+初回起動時（Tauri ストアが空のとき）に `commands/migration.rs` が旧 Electron userData
+（macOS: `~/Library/Application Support/marktext`）から自動インポートする:
+
+- `preferences.json` / `dataCenter.json` — ストアに取り込み後、各 init が現行デフォルトと
+  リコンサイル（不要キー削除・新キー追加 — Electron 時代のアップグレードと同じ流儀）。
+  旧 userData 配下を指すパス値（旧 `images` フォルダ等）は取り込まず新デフォルトを再生成。
+- `keybindings.json` — ファイルコピー（存在し、新側に無い場合のみ）。
+- 移行しないもの: セッションバッファ（`editor-buffer*.json`、ウィンドウ形式が異なる）、
+  `spellcheck.json`（macOS はネイティブスペルチェッカー使用）、最近使った書類
+  （Electron は macOS では OS 管理で、ファイルが存在しない）。

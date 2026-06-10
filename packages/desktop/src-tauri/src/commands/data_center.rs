@@ -32,24 +32,36 @@ fn user_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 /// uploader values otherwise. Run from the Tauri `setup` hook.
 pub fn init(app: &AppHandle) -> Result<(), String> {
     let store = app.store(DATA_CENTER_FILE).map_err(to_err)?;
-    let first_run = store.keys().is_empty();
+    let user_data = user_data_dir(app)?;
+    let image_folder = user_data.join("images");
+    let screenshot_folder = user_data.join("screenshot");
 
-    if first_run {
-        let user_data = user_data_dir(app)?;
-        let image_folder = user_data.join("images");
-        let screenshot_folder = user_data.join("screenshot");
+    // Seed any MISSING defaults (not just on a fully-empty first run): a store
+    // migrated from the Electron install (commands/migration.rs) arrives
+    // non-empty but without the folder-path keys — the migration drops paths
+    // that pointed into the old Electron userData dir so they get re-created
+    // here under the Tauri data dir.
+    if !store.has("imageFolderPath") {
         store.set(
             "imageFolderPath",
             Value::String(image_folder.to_string_lossy().into_owned()),
         );
+    }
+    if !store.has("screenshotFolderPath") {
         store.set(
             "screenshotFolderPath",
             Value::String(screenshot_folder.to_string_lossy().into_owned()),
         );
-        store.set("webImages", Value::Array(vec![]));
-        store.set("cloudImages", Value::Array(vec![]));
-        store.set("currentUploader", Value::String("picgo".into()));
         std::fs::create_dir_all(&screenshot_folder).map_err(to_err)?;
+    }
+    if !store.has("webImages") {
+        store.set("webImages", Value::Array(vec![]));
+    }
+    if !store.has("cloudImages") {
+        store.set("cloudImages", Value::Array(vec![]));
+    }
+    if !store.has("currentUploader") {
+        store.set("currentUploader", Value::String("picgo".into()));
     } else if let Some(uploader) = store.get("currentUploader").as_ref().and_then(Value::as_str) {
         // Migrate uploader values that no longer exist.
         if uploader == "none" || uploader == "github" {

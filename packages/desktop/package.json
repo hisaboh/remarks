@@ -38,7 +38,7 @@
     "predev:tauri": "node scripts/setup-ripgrep.mjs",
     "dev:tauri": "tauri dev",
     "prebuild:tauri": "node scripts/setup-ripgrep.mjs",
-    "build:tauri": "tauri build",
+    "build:tauri": "node scripts/build-tauri.mjs",
     "minify-locales": "tsx ../../scripts/minify-locales.ts",
     "rebuild-native": "electron-rebuild -f",
     "start": "cross-env PERF_TESTING=true electron-vite preview",

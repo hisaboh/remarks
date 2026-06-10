@@ -27,6 +27,7 @@ use tauri_plugin_store::StoreExt;
 /// Menu item id that opens the settings window (handled specially, not a
 /// renderer command).
 pub const PREFERENCES_ID: &str = "app.preferences";
+pub const CHECK_UPDATES_ID: &str = "app.check-updates";
 
 const LINE_ENDING_CRLF_ID: &str = "file.line-ending-crlf";
 const LINE_ENDING_LF_ID: &str = "file.line-ending-lf";
@@ -297,6 +298,7 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     // locale strings already include the app name (e.g. "Quit MarkText").
     let app_menu = SubmenuBuilder::new(app, &tr.t("menu.marktext.title"))
         .item(&PredefinedMenuItem::about(app, Some(&tr.t("menu.marktext.about")), None)?)
+        .item(&cmd(app, CHECK_UPDATES_ID, &tr.t("menu.marktext.checkUpdates"), None)?)
         .separator()
         .item(&cmd(app, PREFERENCES_ID, &tr.t("menu.marktext.preferences"), Some("CmdOrCtrl+,"))?)
         .separator()
@@ -414,6 +416,12 @@ fn focused_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
 pub fn handle_menu_event(app: &AppHandle, id: &str) {
     if id == PREFERENCES_ID {
         crate::commands::window::open_settings(app);
+        return;
+    }
+    if id == CHECK_UPDATES_ID {
+        if let Some(window) = focused_window(app) {
+            crate::commands::updater::check_for_updates(app, &window);
+        }
         return;
     }
     // Recently-used documents (4g): clear, or open the path encoded in the id.

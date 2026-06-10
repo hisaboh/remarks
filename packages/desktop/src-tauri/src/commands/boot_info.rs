@@ -109,8 +109,10 @@ pub fn boot_info(app: AppHandle) -> BootInfo {
             // TODO(phase-3): bundle ripgrep and resolve its bundled path.
             ripgrep_binary: std::env::var("MARKTEXT_RIPGREP_PATH").unwrap_or_default(),
         },
-        // TODO(phase-6): wire up tauri-plugin-updater.
-        is_updatable: false,
+        // Updater (Phase 6): release builds carry the tauri-plugin-updater
+        // config (pubkey + endpoint); dev builds aren't installed bundles, so
+        // an in-place update can't apply.
+        is_updatable: !cfg!(debug_assertions),
         markdown_inclusions: MARKDOWN_EXTENSIONS.iter().map(|e| format!("*.{e}")).collect(),
     }
 }

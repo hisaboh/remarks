@@ -115,7 +115,11 @@ const SEND_MAP: Record<string, CmdSpec> = {
   'mt::ask-for-open-project-in-sidebar': { command: 'project_open' },
   'mt::cmd-open-folder': { command: 'project_open' },
   'mt::open-folder-path': { command: 'project_open_path', params: ['path'] },
-  'mt::rg::cancel': { command: 'rg_cancel', params: ['searchId'] }
+  'mt::rg::cancel': { command: 'rg_cancel', params: ['searchId'] },
+  // Auto-updater (Phase 6): check → mt::UPDATE_* events back; NEED_UPDATE is
+  // the user's answer to the UPDATE_AVAILABLE notification ({ needUpdate }).
+  'mt::check-for-update': { command: 'updater_check' },
+  'mt::NEED_UPDATE': { command: 'updater_need_update', params: ['payload'] }
 }
 
 // Built-in Tauri window controls — handled without a custom Rust command.
