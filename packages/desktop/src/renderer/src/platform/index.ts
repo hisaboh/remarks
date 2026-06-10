@@ -182,7 +182,7 @@ const ripgrepAPI: RipgrepAPI = {
   onCancelled: (h) => ipcRenderer.on('mt::rg::cancelled', (_e, p) => h(p))
 }
 const uploaderAPI: UploaderAPI = {
-  uploadImage: () => Promise.reject(new Error('uploader not implemented under Tauri yet'))
+  uploadImage: (req) => invoke('mt::uploader::upload', req)
 }
 const fontsAPI: FontsAPI = {
   list: () => invoke('mt::fonts::list') as Promise<string[]>

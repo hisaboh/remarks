@@ -103,6 +103,8 @@ pub fn run() {
             commands::fonts::fonts_list,
             // command existence check (uploader: node/npm/picgo)
             commands::cmd::cmd_exists,
+            // image uploader (picgo / cli script)
+            commands::uploader::uploader_upload,
             // editor bootstrap (Phase 4)
             commands::editor::editor_bootstrap_config,
             // file open / save (Phase 4)
