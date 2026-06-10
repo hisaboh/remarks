@@ -559,7 +559,11 @@ class Selection {
       node = node.parentNode
     }
 
-    return node.closest('span.ag-paragraph')
+    // Match any `.ag-paragraph` element, not only `span.ag-paragraph`: a
+    // paragraph can be a `<p class="ag-paragraph">`, and under WebKit the
+    // selection anchor may resolve to it rather than to an inner span. The
+    // `span`-only check then wrongly reports the cursor as invalid → blur.
+    return node.closest('.ag-paragraph')
   }
 
   getCursorRange() {
@@ -576,12 +580,23 @@ class Selection {
       focusNode = anchorNode
       focusOffset = anchorOffset
     } else if (!isAnchorValid && !isFocusValid) {
-      const editorElement = this.doc.querySelector('#ag-editor-id')
-      if (editorElement && editorElement.parentNode) {
-        const editor = editorElement.parentNode
-        editor.blur()
+      // WebKit may place the selection anchor on a container rather than inside
+      // a paragraph (e.g. during an IME commit). Blurring the editor here would
+      // CANCEL an in-progress IME composition (losing the typed text), so fall
+      // back to the first paragraph and keep focus instead.
+      const firstParagraph = this.doc.querySelector('.ag-paragraph')
+      if (firstParagraph && firstParagraph.id) {
+        const key = firstParagraph.id
+        return new Cursor({
+          start: { key, offset: 0 },
+          end: { key, offset: 0 },
+          anchor: { key, offset: 0 },
+          focus: { key, offset: 0 }
+        })
       }
 
+      // No paragraph at all — return a null cursor but, crucially, do NOT blur,
+      // so the editor keeps focus and the user can retry.
       return new Cursor({
         start: null,
         end: null,

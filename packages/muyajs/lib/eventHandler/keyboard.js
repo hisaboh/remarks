@@ -4,6 +4,14 @@ import { findNearestParagraph } from '../selection/dom'
 import { getParagraphReference, getImageInfo } from '../utils'
 import { checkEditEmoji } from '../ui/emojis'
 
+// True for keydown events that belong to an IME composition, including the
+// commit key. WebKit reports keyCode 229 (the "IME processing" sentinel) for
+// these — and crucially the commit Enter still has keyCode 229 even after
+// isComposing/isComposed have flipped to false, so neither flag alone catches
+// it. Both key handlers must ignore these, or the IME-commit Enter is processed
+// as a paragraph split and corrupts the just-committed text.
+const isImeKey = (event) => event.isComposing || event.keyCode === 229
+
 class Keyboard {
   constructor(muya) {
     this.muya = muya
@@ -50,9 +58,21 @@ class Keyboard {
         this.isComposed = true
       } else if (event.type === 'compositionend') {
         this.isComposed = false
-        // Because the compose event will not cause `input` event, So need call `inputHandler` by ourself
-        contentState.inputHandler(event)
-        eventCenter.dispatch('stateChange')
+        // The compose event doesn't fire an `input` event, so commit the text
+        // ourselves — but only when the selection is still inside a paragraph.
+        // Under WebKit a broken/relocated anchor here would make inputHandler
+        // corrupt the paragraph; skipping it leaves the DOM intact instead.
+        const sel = window.getSelection ? window.getSelection() : null
+        const anchor = sel ? sel.anchorNode : null
+        const selectionValid = anchor
+          ? anchor.nodeType === 3
+            ? anchor.parentNode && anchor.parentNode.closest('.ag-paragraph')
+            : typeof anchor.closest === 'function' && anchor.closest('.ag-paragraph')
+          : false
+        if (selectionValid) {
+          contentState.inputHandler(event)
+          eventCenter.dispatch('stateChange')
+        }
       }
     }
 
@@ -105,6 +125,11 @@ class Keyboard {
   keydownBinding() {
     const { container, eventCenter, contentState } = this.muya
     const docHandler = (event) => {
+      // Ignore IME-composition keys (incl. the keyCode-229 commit Enter) so they
+      // don't trigger paragraph edits mid/just-after a composition. See `isImeKey`.
+      if (isImeKey(event)) {
+        return
+      }
       switch (event.code) {
         case EVENT_KEYS.Enter:
           return contentState.docEnterHandler(event)
@@ -135,6 +160,12 @@ class Keyboard {
     }
 
     const handler = (event) => {
+      // Ignore IME-composition keys (incl. the keyCode-229 commit Enter); the
+      // per-case `!this.isComposed` checks below are flag-based and race the
+      // compositionend timing under WebKit, so this is the authoritative guard.
+      if (isImeKey(event)) {
+        return
+      }
       if (event.metaKey || event.ctrlKey) {
         container.classList.add('ag-meta-or-ctrl')
       }
@@ -205,13 +236,7 @@ class Keyboard {
   inputBinding() {
     const { container, eventCenter, contentState } = this.muya
     const inputHandler = (event) => {
-      // WebKit fires the composition-phase `input` event with isComposing=true
-      // and sequences compositionend differently from Chromium, so the
-      // `isComposed` flag alone can let an IME keystroke be processed twice
-      // (once here, once from the compositionend handler). Guard on the native
-      // `event.isComposing` too — it's always false for normal typing, so this
-      // only adds protection during IME composition.
-      if (!this.isComposed && !event.isComposing) {
+      if (!this.isComposed) {
         contentState.inputHandler(event)
         this.muya.dispatchChange()
       }
