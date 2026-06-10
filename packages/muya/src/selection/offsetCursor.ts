@@ -13,7 +13,8 @@
 
 import type Content from '../block/base/content';
 import type { ScrollPage } from '../block/scrollPage';
-import type { ICursor } from './types';
+import type { TState } from '../state/types';
+import type { ICursor, ISelection } from './types';
 
 /** One end of a source-mode (CodeMirror) selection: a `{ line, ch }` offset. */
 export interface IIndexPosition {
@@ -164,5 +165,181 @@ export function resolveSentinelCursor(scrollPage: ScrollPage): ICursor | null {
         anchorPath: [...anchor.block.path],
         focus: { offset: focusOffset },
         focusPath: [...focus.block.path],
+    };
+}
+
+// ---------------------------------------------------------------------------
+// INVERSE direction: WYSIWYG block-key selection -> source `{ line, ch }`
+// index cursor. The mirror of the index->path conversion above (PARITY gap
+// PG2 / Phase G — G7). Legacy muyajs computed this in
+// `ContentState.getMuyaIndexCursor` (block-path -> {line,ch} via sentinels +
+// ExportMarkdown) and emitted it on every change so the desktop could open
+// source-code mode at the same caret. `@muyajs/core` only shipped the WRITE
+// direction; this re-adds the READ direction reusing the same serialize path.
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk a (cloned) state tree along a content block's json1 `path` — which ends
+ * in the `'text'` key — and splice `sentinel` into that block's text at
+ * `offset` (clamped). Returns `false` when the path does not resolve to a node
+ * carrying a string `text` field (e.g. a non-content block), so the caller can
+ * bail out. Mutates `state` in place; the caller passes a throwaway clone.
+ */
+function _injectSentinelAtPath(
+    state: TState[],
+    path: (string | number)[],
+    offset: number,
+    sentinel: string,
+): boolean {
+    if (path.length === 0)
+        return false;
+
+    // Navigate to the parent node that owns the final key.
+    let node: unknown = state;
+    for (let i = 0; i < path.length - 1; i++) {
+        if (node == null || typeof node !== 'object')
+            return false;
+        node = (node as Record<string | number, unknown>)[path[i]!];
+    }
+
+    const key = path[path.length - 1]!;
+    if (node == null || typeof node !== 'object')
+        return false;
+
+    const holder = node as Record<string | number, unknown>;
+    const text = holder[key];
+    if (typeof text !== 'string')
+        return false;
+
+    const at = _clampOffset(offset, text.length);
+    holder[key] = text.substring(0, at) + sentinel + text.substring(at);
+
+    return true;
+}
+
+/**
+ * Inject the anchor/focus sentinels into a cloned `state` tree at the block
+ * paths + offsets of `selection`. Returns the mutated state, or `null` when
+ * neither endpoint resolves to a content block's text (so the caret can't be
+ * located in the serialized markdown).
+ *
+ * When anchor and focus share a block, the sentinel at the SMALLER offset is
+ * injected first (unshifted) and the one at the larger offset second, with its
+ * offset bumped by the first sentinel's length — handling both forward and
+ * backward selections. `_injectSentinelAtPath` re-reads the text on each call,
+ * so injecting the earlier one first keeps the later offset valid.
+ */
+export function injectStateSentinels(
+    state: TState[],
+    selection: ISelection,
+): TState[] | null {
+    const { anchorPath, focusPath } = selection;
+    const anchorOffset = selection.anchor.offset;
+    const focusOffset = selection.focus.offset;
+
+    const sameBlock
+        = anchorPath.length === focusPath.length
+            && anchorPath.every((seg, i) => seg === focusPath[i]);
+
+    const inject = (
+        path: (string | number)[],
+        offset: number,
+        sentinel: string,
+    ): boolean => _injectSentinelAtPath(state, path, offset, sentinel);
+
+    if (!sameBlock) {
+        // Different blocks (or different lines): the injections never overlap.
+        const anchorOk = inject(anchorPath, anchorOffset, ANCHOR_SENTINEL);
+        const focusOk = inject(focusPath, focusOffset, FOCUS_SENTINEL);
+
+        return anchorOk || focusOk ? state : null;
+    }
+
+    // Same block: inject the earlier offset first (unshifted), then the later
+    // one shifted by the first sentinel's length.
+    let ok: boolean;
+    if (anchorOffset <= focusOffset) {
+        ok = inject(anchorPath, anchorOffset, ANCHOR_SENTINEL);
+        ok = inject(focusPath, focusOffset + ANCHOR_SENTINEL.length, FOCUS_SENTINEL) || ok;
+    }
+    else {
+        ok = inject(focusPath, focusOffset, FOCUS_SENTINEL);
+        ok = inject(anchorPath, anchorOffset + FOCUS_SENTINEL.length, ANCHOR_SENTINEL) || ok;
+    }
+
+    return ok ? state : null;
+}
+
+/**
+ * Count the `\n` characters in `markdown` before `idx` (= the 0-based line of
+ * `idx`) without allocating an intermediate array — this can run on large
+ * documents. `lastIndexOf` is a native scan, so the column is cheap too.
+ */
+function _lineColAt(markdown: string, idx: number): IIndexPosition {
+    let line = 0;
+    for (let i = 0; i < idx; i++) {
+        if (markdown.charCodeAt(i) === 10 /* \n */)
+            line++;
+    }
+    const lastNewline = markdown.lastIndexOf('\n', idx - 1);
+
+    return { line, ch: idx - (lastNewline + 1) };
+}
+
+/** Locate `sentinel` in `markdown` and return its `{ line, ch }`, or `null`. */
+function _findOffsetInMarkdown(
+    markdown: string,
+    sentinel: string,
+): IIndexPosition | null {
+    const idx = markdown.indexOf(sentinel);
+    if (idx === -1)
+        return null;
+
+    return _lineColAt(markdown, idx);
+}
+
+/**
+ * Read the sentinel positions back out of the serialized (sentinel-bearing)
+ * `markdown` into an `{ line, ch }` index cursor. Returns `null` when a
+ * sentinel that was injected cannot be found (e.g. a serializer dropped the
+ * surrounding text). Removes both sentinels from the line/ch accounting: the
+ * focus position is corrected for any earlier-occurring anchor sentinel.
+ */
+export function locateSentinelOffsets(markdown: string): IIndexCursor | null {
+    const anchorRaw = _findOffsetInMarkdown(markdown, ANCHOR_SENTINEL);
+    const focusRaw = _findOffsetInMarkdown(markdown, FOCUS_SENTINEL);
+
+    if (!anchorRaw && !focusRaw)
+        return null;
+
+    // Compute each sentinel's flat index so we can subtract the length of any
+    // OTHER sentinel that precedes it (sentinels never share the same index).
+    const anchorIdx = markdown.indexOf(ANCHOR_SENTINEL);
+    const focusIdx = markdown.indexOf(FOCUS_SENTINEL);
+
+    const cleanLineCh = (
+        raw: IIndexPosition | null,
+        ownIdx: number,
+        otherIdx: number,
+        otherLen: number,
+    ): IIndexPosition | null => {
+        if (!raw)
+            return null;
+        // Only same-line earlier sentinels shift `ch`; earlier-line ones don't.
+        if (otherIdx !== -1 && otherIdx < ownIdx) {
+            const otherLine = _lineColAt(markdown, otherIdx).line;
+            if (otherLine === raw.line)
+                return { line: raw.line, ch: raw.ch - otherLen };
+        }
+
+        return raw;
+    };
+
+    const anchor = cleanLineCh(anchorRaw, anchorIdx, focusIdx, FOCUS_SENTINEL.length);
+    const focus = cleanLineCh(focusRaw, focusIdx, anchorIdx, ANCHOR_SENTINEL.length);
+
+    return {
+        anchor: anchor ?? focus,
+        focus: focus ?? anchor,
     };
 }

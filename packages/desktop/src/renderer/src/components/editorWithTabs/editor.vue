@@ -751,13 +751,28 @@ watch(currentFile, (value, oldValue) => {
   }
 })
 
-watch(sourceCode, (value, oldValue) => {
-  if (value && value !== oldValue) {
-    if (editor.value) {
-      editor.value.hideAllFloatTools()
+watch(
+  sourceCode,
+  (value, oldValue) => {
+    if (value && value !== oldValue) {
+      if (editor.value) {
+        editor.value.hideAllFloatTools()
+        // Compute the WYSIWYG caret as a source-markdown `{ line, ch }` index
+        // cursor JUST-IN-TIME, only when entering source mode (Phase G — G7),
+        // and write it to the tab before sourceCode.vue mounts (`flush: 'sync'`
+        // runs this before the `v-if`-gated child reads `props.muyaIndexCursor`
+        // in its onMounted). This is the inverse of the `setCursorByOffset`
+        // source -> WYSIWYG path. Computing it here rather than on every
+        // json-change/selection-change avoids serializing the whole document on
+        // each keystroke/caret move, and guarantees a fresh (never stale) value.
+        if (currentFile.value) {
+          currentFile.value.muyaIndexCursor = editor.value.getCursorOffset() ?? null
+        }
+      }
     }
-  }
-})
+  },
+  { flush: 'sync' }
+)
 
 // Methods
 const jumpClick = (linkInfo: { href: string }) => {
