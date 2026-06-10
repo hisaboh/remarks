@@ -99,6 +99,8 @@ pub fn run() {
             commands::fs::fs_trash_item,
             // encoding (Phase 3: ced/iconv replacement)
             commands::encoding::fs_read_text_auto,
+            // system fonts (preferences autocomplete)
+            commands::fonts::fonts_list,
             // editor bootstrap (Phase 4)
             commands::editor::editor_bootstrap_config,
             // file open / save (Phase 4)

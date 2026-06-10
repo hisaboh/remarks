@@ -20,6 +20,7 @@ pub mod data_center;
 pub mod editor;
 pub mod encoding;
 pub mod files;
+pub mod fonts;
 pub mod fs;
 pub mod keybindings;
 pub mod paths;

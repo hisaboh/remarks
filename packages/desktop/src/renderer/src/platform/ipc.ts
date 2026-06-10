@@ -25,6 +25,7 @@ interface CmdSpec {
 // renderer → main, Promise-returning channels.
 const INVOKE_MAP: Record<string, CmdSpec> = {
   'mt::boot-info-async': { command: 'boot_info' },
+  'mt::fonts::list': { command: 'fonts_list' },
   'mt::fs::is-file': { command: 'fs_is_file', params: ['path'] },
   'mt::fs::is-directory': { command: 'fs_is_directory', params: ['path'] },
   'mt::fs::empty-dir': { command: 'fs_empty_dir', params: ['path'] },

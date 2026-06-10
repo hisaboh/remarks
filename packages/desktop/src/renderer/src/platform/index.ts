@@ -185,7 +185,7 @@ const uploaderAPI: UploaderAPI = {
   uploadImage: () => Promise.reject(new Error('uploader not implemented under Tauri yet'))
 }
 const fontsAPI: FontsAPI = {
-  list: () => Promise.resolve([])
+  list: () => invoke('mt::fonts::list') as Promise<string[]>
 }
 
 // ---- default URL args (single editor window) -------------------------------
