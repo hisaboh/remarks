@@ -107,6 +107,8 @@ pub fn run() {
             commands::uploader::uploader_upload,
             // editor bootstrap (Phase 4)
             commands::editor::editor_bootstrap_config,
+            // session buffer persistence (restore previous tabs)
+            commands::session::update_buffer_state,
             // file open / save (Phase 4)
             commands::files::file_open,
             commands::files::file_open_path,

@@ -215,6 +215,16 @@ const registerBootstrapHandshake = (): void => {
       // Target THIS window only — a broadcast would re-bootstrap other editors.
       .then((config) => {
         emitTo(label, 'mt::bootstrap-editor', config)
+        // Session restore: replay the previous buffer (tabs + content) as
+        // mt::load-state right after bootstrap. The project root needs the Rust
+        // watcher to (re)scan, so trigger the folder-open flow too.
+        const restoreState = (config as { restoreState?: unknown }).restoreState
+        if (restoreState) {
+          emitTo(label, 'mt::load-state', restoreState)
+          const root = (restoreState as { project?: { rootDirectory?: string } }).project
+            ?.rootDirectory
+          if (root) send('mt::open-folder-path', root)
+        }
         // 4e: open launch files (CLI argv / macOS Opened) after init. Each
         // mt::open-file → file_open_path reads the file async, so the blank
         // bootstrap-editor handler runs first.

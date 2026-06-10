@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_store::{Store, StoreExt};
 
 use crate::commands::preferences::PREFERENCES_FILE;
@@ -58,6 +58,9 @@ pub struct BootstrapConfig {
     markdown_list: Vec<String>,
     /// File paths to open after init (the shim sends `mt::open-file` for each).
     files_to_open: Vec<String>,
+    /// Previous-session buffered state to replay as `mt::load-state` (session
+    /// restore); `null` when not restoring. See `commands/session.rs`.
+    restore_state: Option<Value>,
     line_ending: String,
     side_bar_visibility: bool,
     tab_bar_visibility: bool,
@@ -73,7 +76,10 @@ fn pref_bool<R: tauri::Runtime>(store: &Store<R>, key: &str, default: bool) -> b
 }
 
 #[tauri::command]
-pub fn editor_bootstrap_config(app: AppHandle) -> Result<BootstrapConfig, String> {
+pub fn editor_bootstrap_config(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<BootstrapConfig, String> {
     let store = app.store(PREFERENCES_FILE).map_err(|e| e.to_string())?;
 
     // Mirror Preference.getPreferredEol(): explicit lf/crlf wins, otherwise the
@@ -92,6 +98,22 @@ pub fn editor_bootstrap_config(app: AppHandle) -> Result<BootstrapConfig, String
     }
     .to_string();
 
+    // Session restore: replay the previous buffer on the MAIN window only when
+    // the user opted into "restore all" (single-window restore; child windows
+    // and re-bootstraps start fresh). Mirrors Electron's startUpAction flow.
+    let start_up_action = store
+        .get("startUpAction")
+        .as_ref()
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let restore_state = if start_up_action == "restoreAll" && window.label() == "main" {
+        crate::commands::session::read_buffer_state(&app, window.label())
+    } else {
+        None
+    };
+    let restoring = restore_state.is_some();
+
     // Launch files (4e) go to the FIRST window to bootstrap; later windows
     // (and re-bootstraps) start blank. Drained once.
     let pending = app.state::<PendingOpen>();
@@ -102,10 +124,11 @@ pub fn editor_bootstrap_config(app: AppHandle) -> Result<BootstrapConfig, String
     };
 
     Ok(BootstrapConfig {
-        // No launch files → start with one blank tab; otherwise open them.
-        add_blank_tab: files_to_open.is_empty(),
+        // Blank tab only when not restoring a session and no launch files.
+        add_blank_tab: !restoring && files_to_open.is_empty(),
         markdown_list: vec![],
         files_to_open,
+        restore_state,
         line_ending,
         side_bar_visibility: pref_bool(&store, "sideBarVisibility", false),
         tab_bar_visibility: pref_bool(&store, "tabBarVisibility", false),
