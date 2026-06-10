@@ -160,8 +160,8 @@
 | # | タスク | ブロッカー |
 |---|---|---|
 | A1 | コード署名 + 公証 | **Apple Developer Program 加入**（Developer ID Application 証明書）。配線・文書化は完了済み、証明書を入れて環境変数を設定するだけ |
-| A2 | GitHub Releases へのリリースフロー | `latest.json` + `.tar.gz` + `.sig` 公開の CI ワークフロー（tauri-action）。現状は手動手順を上記に文書化済み |
-| A3 | 秘密鍵バックアップ | `~/.tauri/marktext.key`（紛失＝アップデート配信不能） |
+| A2 | GitHub Releases へのリリースフロー | `latest.json` + `.tar.gz` + `.sig` 公開の CI ワークフロー（tauri-action）。**未着手**（`.github/workflows/` に `tauri build` を回すものが無い）。現状は手動手順を上記に文書化済み |
+| ~~A3~~ | ~~秘密鍵バックアップ~~ ✅ 完了 | CI 用正本 = GitHub Actions Repository secret `TAURI_SIGNING_PRIVATE_KEY`（write-only なので読み出し不可）。人間が復元できる控え = macOS パスワードアプリ（iCloud キーチェーン同期）。※この鍵はアプリ名変更時に作り直す暫定鍵（§E） |
 
 ### B. 移植時に意図的にスキップした項目（DEFERRED）
 
