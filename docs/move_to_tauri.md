@@ -195,6 +195,34 @@
 - D1: 単一行 `$$...$$` ブロック数式が raw 表示 — **Electron 版でも同じ** muya パーサー挙動
   （移行スコープ外）
 
+### E. 将来のアプリ名変更チェックリスト（未着手・まとめて実施予定）
+
+アプリ名（identifier / productName）を変更する際にまとめて対応する。updater 鍵の
+再生成・パスワード付き化・鍵名変更もこのタイミングで一括実施する方針
+（鍵は一度公開リリースに使うと差し替え不可になるため、**初回公開リリース前の今が
+やり直しの好機**）。波及範囲:
+
+- **`tauri.conf.json`**
+  - `identifier`（現 `app.marktext.marktext`）— ⚠️ これを変えると `app_data_dir` の
+    パス（現 `~/Library/Application Support/app.marktext.marktext`）が変わり、**既存 Tauri
+    ユーザーの設定/データが新パスに移らない**。旧 identifier → 新 identifier の
+    データ移行コードが別途必要（`commands/migration.rs` は Electron→Tauri 専用なので流用不可）。
+  - `productName`（現 `marktext`）— `.app` 名・バンドル名・DMG 名。
+  - `plugins.updater.endpoints`（現 `github.com/marktext/marktext`）— リポジトリ名を
+    変える場合のみ更新。
+  - `plugins.updater.pubkey` — 鍵再生成後の新公開鍵に差し替え。
+- **updater 署名鍵**
+  - `tauri signer generate -w ~/.tauri/<新名>.key`（**パスワード付き**で生成）。
+  - `scripts/build-tauri.mjs` のハードコードされた鍵パス `~/.tauri/marktext.key` を新名に変更し、
+    `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 環境変数の受け渡しを追加（現状は空パスワード前提）。
+  - GitHub Actions secrets（`TAURI_SIGNING_PRIVATE_KEY` + 新たに `..._PASSWORD`）を更新。
+- **`commands/migration.rs`** — 旧 Electron データ参照 `config_dir/marktext` は据え置き
+  （Electron 版の名前は変わらないため）。ただし上記の「旧 Tauri identifier → 新 identifier」
+  移行を足す場合はこのファイルに追加するのが自然。
+- **表示名 "MarkText"** — `static/locales/*.json`、ウィンドウタイトル、メニュー i18n、
+  CLAUDE.md 等のドキュメント。機能には影響しないが UI 文言として要確認。
+- **`fileAssociations`** の `name: "Markdown"` はアプリ名と無関係 → そのままでよい。
+
 ### 着手の優先順位（提案）
 
 1. **今すぐ着手可能で価値が高い**: B8（unwatch、メモリリーク防止）、B1（マルチウィンドウ復元）
