@@ -205,7 +205,13 @@ class Keyboard {
   inputBinding() {
     const { container, eventCenter, contentState } = this.muya
     const inputHandler = (event) => {
-      if (!this.isComposed) {
+      // WebKit fires the composition-phase `input` event with isComposing=true
+      // and sequences compositionend differently from Chromium, so the
+      // `isComposed` flag alone can let an IME keystroke be processed twice
+      // (once here, once from the compositionend handler). Guard on the native
+      // `event.isComposing` too — it's always false for normal typing, so this
+      // only adds protection during IME composition.
+      if (!this.isComposed && !event.isComposing) {
         contentState.inputHandler(event)
         this.muya.dispatchChange()
       }
