@@ -581,22 +581,11 @@ class Selection {
       focusOffset = anchorOffset
     } else if (!isAnchorValid && !isFocusValid) {
       // WebKit may place the selection anchor on a container rather than inside
-      // a paragraph (e.g. during an IME commit). Blurring the editor here would
-      // CANCEL an in-progress IME composition (losing the typed text), so fall
-      // back to the first paragraph and keep focus instead.
-      const firstParagraph = this.doc.querySelector('.ag-paragraph')
-      if (firstParagraph && firstParagraph.id) {
-        const key = firstParagraph.id
-        return new Cursor({
-          start: { key, offset: 0 },
-          end: { key, offset: 0 },
-          anchor: { key, offset: 0 },
-          focus: { key, offset: 0 }
-        })
-      }
-
-      // No paragraph at all — return a null cursor but, crucially, do NOT blur,
-      // so the editor keeps focus and the user can retry.
+      // a paragraph (e.g. around an IME commit). Don't blur — blurring CANCELS
+      // an in-progress composition and loses the typed text — and don't invent
+      // a cursor either: pointing it at an unrelated paragraph gets written
+      // into contentState.cursor by keyup and corrupts later edits. Every
+      // caller handles a null cursor by ignoring the event.
       return new Cursor({
         start: null,
         end: null,
