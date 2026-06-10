@@ -181,6 +181,25 @@ export const invoke = (channel: string, ...args: unknown[]): Promise<unknown> =>
       return ok
     })
   }
+  // Spell checking: on macOS WKWebView underlines misspelled words natively via
+  // muya's HTML `spellcheck` container attribute (set/toggled in the renderer
+  // through editor.setOptions), and the OS spell checker auto-detects language.
+  // So these channels resolve to macOS no-op values — no backend round-trip.
+  if (channel === 'mt::spellchecker-set-enabled') {
+    return Promise.resolve(true)
+  }
+  if (channel === 'mt::spellchecker-switch-language') {
+    return Promise.resolve(null)
+  }
+  if (
+    channel === 'mt::spellchecker-get-available-dictionaries' ||
+    channel === 'mt::spellchecker-get-custom-dictionary-words'
+  ) {
+    return Promise.resolve([])
+  }
+  if (channel === 'mt::spellchecker-remove-word') {
+    return Promise.resolve(false)
+  }
   const spec = INVOKE_MAP[channel]
   if (!spec) {
     console.warn(`[platform] unimplemented invoke channel: ${channel}`)
