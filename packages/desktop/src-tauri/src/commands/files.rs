@@ -298,10 +298,28 @@ fn encode_markdown(markdown: &str, options: &Value) -> Vec<u8> {
         let mut bytes = if is_bom { vec![0xEF, 0xBB, 0xBF] } else { Vec::new() };
         bytes.extend_from_slice(content.as_bytes());
         bytes
+    } else if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
+        // encoding_rs has no UTF-16 encoder (it would silently emit UTF-8 and
+        // corrupt the file), so encode by hand. `detect` only ever picks
+        // UTF-16 from a BOM, so a round-tripped UTF-16 file always re-saves
+        // with a BOM; honor `is_bom` regardless.
+        let big_endian = enc == encoding_rs::UTF_16BE;
+        let mut bytes = Vec::with_capacity(content.len() * 2 + 2);
+        if is_bom {
+            bytes.extend_from_slice(if big_endian { &[0xFE, 0xFF] } else { &[0xFF, 0xFE] });
+        }
+        for unit in content.encode_utf16() {
+            let pair = if big_endian {
+                unit.to_be_bytes()
+            } else {
+                unit.to_le_bytes()
+            };
+            bytes.extend_from_slice(&pair);
+        }
+        bytes
     } else {
-        // NOTE: encoding_rs::encode yields UTF-8 for UTF-16 targets (it has no
-        // UTF-16 encoder); legacy single/multi-byte encodings round-trip fine.
-        // TODO(phase-4): handle UTF-16 save if a real file needs it.
+        // Legacy single/multi-byte encodings (Shift_JIS, EUC, windows-125x…)
+        // round-trip fine through encoding_rs.
         let (cow, _enc_used, _had_errors) = enc.encode(&content);
         cow.into_owned()
     }
@@ -670,4 +688,43 @@ fn process_close_queue(
 /// `tabIdList` argument the renderer expects.
 fn force_close_tabs(window: &WebviewWindow, ids: &[&str]) {
     let _ = window.emit_to(window.label(), "mt::force-close-tabs-by-id", json!([ids]));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn opts(name: &str, is_bom: bool) -> Value {
+        json!({ "encoding": { "encoding": name, "isBom": is_bom } })
+    }
+
+    #[test]
+    fn utf16le_save_round_trips_with_bom() {
+        // "あ" = U+3042 → LE bytes 0x42 0x30, BOM 0xFF 0xFE.
+        let bytes = encode_markdown("あ", &opts("UTF-16LE", true));
+        assert_eq!(bytes, vec![0xFF, 0xFE, 0x42, 0x30]);
+        let (text, _enc, _err) = encoding_rs::UTF_16LE.decode(&bytes);
+        assert_eq!(text, "あ");
+    }
+
+    #[test]
+    fn utf16be_save_round_trips_with_bom() {
+        let bytes = encode_markdown("あ", &opts("UTF-16BE", true));
+        assert_eq!(bytes, vec![0xFE, 0xFF, 0x30, 0x42]);
+        let (text, _enc, _err) = encoding_rs::UTF_16BE.decode(&bytes);
+        assert_eq!(text, "あ");
+    }
+
+    #[test]
+    fn utf16_save_without_bom_omits_bom() {
+        let bytes = encode_markdown("A", &opts("UTF-16LE", false));
+        assert_eq!(bytes, vec![0x41, 0x00]);
+    }
+
+    #[test]
+    fn utf8_save_is_unchanged() {
+        let bytes = encode_markdown("hello 日本語", &opts("utf8", false));
+        assert_eq!(bytes, "hello 日本語".as_bytes());
+    }
 }
