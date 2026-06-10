@@ -11,16 +11,22 @@
 //   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID   (notarization)
 
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const env = { ...process.env }
 
-if (!env.TAURI_SIGNING_PRIVATE_KEY && !env.TAURI_SIGNING_PRIVATE_KEY_PATH) {
+if (!env.TAURI_SIGNING_PRIVATE_KEY) {
   const keyPath = join(homedir(), '.tauri', 'marktext.key')
   if (existsSync(keyPath)) {
-    env.TAURI_SIGNING_PRIVATE_KEY_PATH = keyPath
+    // The bundler's updater signing only reads TAURI_SIGNING_PRIVATE_KEY
+    // (key content; the *_PATH variant is not honored at build time).
+    env.TAURI_SIGNING_PRIVATE_KEY = readFileSync(keyPath, 'utf-8')
+    // The key was generated without a password (`tauri signer generate --ci`);
+    // an explicit empty password skips the interactive prompt, which would
+    // otherwise fail in non-TTY builds ("Device not configured").
+    env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ??= ''
     console.log(`[build-tauri] using updater signing key at ${keyPath}`)
   } else {
     console.error(

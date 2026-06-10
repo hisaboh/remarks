@@ -105,7 +105,7 @@
 
 - 構成: `tauri.conf.json` → `plugins.updater.pubkey` + `endpoints`
   （GitHub Releases の `latest.json`: `https://github.com/marktext/marktext/releases/latest/download/latest.json`）、
-  `bundle.createUpdaterArtifacts: true`（`.app.tar.gz` + `.sig` + `latest.json` を生成）。
+  `bundle.createUpdaterArtifacts: true`（`.app.tar.gz` + `.sig` を生成 — macOS で検証済み）。
 - 鍵ペア: `pnpm exec tauri signer generate -w ~/.tauri/marktext.key` で生成済み。
   **秘密鍵 `~/.tauri/marktext.key` は必ずバックアップすること**（紛失するとアップデート配信不能。
   公開鍵を差し替えると既存インストールはアップデートを検証できなくなる）。
@@ -118,8 +118,10 @@
   renderer `mt::NEED_UPDATE {needUpdate}` → `updater_need_update` がダウンロード+インストール →
   `mt::UPDATE_DOWNLOADED` → 約1.5秒後に再起動。ネイティブメニュー
   「Check for Updates」(`app.check-updates`) からも起動可能。
-- リリース手順: `latest.json`（バンドラ生成物）と `.app.tar.gz` / `.sig` を GitHub Release の
-  アセットとしてアップロードする。`boot_info.is_updatable` はリリースビルドで true。
+- リリース手順: `.app.tar.gz` / `.sig` と `latest.json` を GitHub Release のアセットとして
+  アップロードする。`latest.json` はバンドラは生成しない — リリース時に組み立てる
+  （CI なら tauri-action が自動生成。手動なら `{version, pub_date, platforms:
+  {"darwin-aarch64": {signature: <sigファイルの内容>, url: <tar.gzのURL>}}}` を書く）。`boot_info.is_updatable` はリリースビルドで true。
 
 ### コード署名・公証（macOS）
 
