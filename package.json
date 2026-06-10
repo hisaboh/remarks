@@ -31,6 +31,7 @@
     "test": "pnpm --filter marktext test",
     "test:unit": "pnpm --filter marktext test:unit",
     "test:e2e": "pnpm --filter marktext test:e2e",
+    "test:e2e:tauri": "pnpm --filter marktext test:e2e:tauri",
     "typecheck": "pnpm --filter marktext typecheck",
     "typecheck:watch": "pnpm --filter marktext typecheck:watch",
     "check": "pnpm lint && pnpm typecheck",
