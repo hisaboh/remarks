@@ -151,7 +151,7 @@ const windowControlAPI: ElectronWindowControlAPI = {
 // they resolve to benign defaults so the renderer can still boot. Each is a
 // later-phase TODO.
 const commandExistsAPI: CommandExistsAPI = {
-  exists: () => Promise.resolve(false)
+  exists: (name) => invoke('mt::cmd::exists', name) as Promise<boolean>
 }
 // Locale JSON files (packages/desktop/static/locales/*.json), bundled lazily by
 // vite as separate chunks so only the requested locale is fetched at runtime —
