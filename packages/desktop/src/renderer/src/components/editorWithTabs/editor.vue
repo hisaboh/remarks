@@ -84,22 +84,40 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, watch, onMounted, onBeforeUnmount, nextTick, markRaw } from 'vue'
 import log from 'electron-log'
-import Muya from 'muya/lib'
-import TablePicker from 'muya/lib/ui/tablePicker'
-import QuickInsert from 'muya/lib/ui/quickInsert'
-import CodePicker from 'muya/lib/ui/codePicker'
-import EmojiPicker from 'muya/lib/ui/emojiPicker'
-import ImagePathPicker from 'muya/lib/ui/imagePicker'
-import ImageSelector from 'muya/lib/ui/imageSelector'
-import ImageToolbar from 'muya/lib/ui/imageToolbar'
-import Transformer from 'muya/lib/ui/transformer'
-import FormatPicker from 'muya/lib/ui/formatPicker'
-import LinkTools from 'muya/lib/ui/linkTools'
-import FootnoteTool from 'muya/lib/ui/footnoteTool'
-import TableBarTools from 'muya/lib/ui/tableTools'
-import FrontMenu from 'muya/lib/ui/frontMenu'
+import {
+  Muya,
+  CodeBlockLanguageSelector,
+  EmojiSelector,
+  FootnoteTool,
+  ImageEditTool,
+  ImagePathPicker,
+  ImageResizeBar,
+  ImageToolBar,
+  InlineFormatToolbar,
+  LinkTools,
+  ParagraphFrontButton,
+  ParagraphFrontMenu,
+  ParagraphQuickInsertMenu,
+  PreviewToolBar,
+  TableChessboard,
+  TableColumnToolbar,
+  TableDragBar,
+  TableRowColumMenu,
+  wordCount as muyaWordCount,
+  en,
+  de,
+  es,
+  fr,
+  ja,
+  ko,
+  pt,
+  zhCN,
+  zhTW,
+  type ILocale
+} from '@muyajs/core'
+import { exportStyledHTML, type HeaderFooterPart } from '@/util/exportHtml'
 import EditorSearch from '../search/index.vue'
 import bus from '@/bus'
 import { DEFAULT_EDITOR_FONT_FAMILY } from '@/config'
@@ -117,13 +135,41 @@ import { useEditorStore } from '@/store/editor'
 import { useProjectStore } from '@/store/project'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
+import { SyntheticHistory, type IFileHistoryLike } from './syntheticHistory'
 
-import 'muya/themes/default.css'
+// Importing the engine entrypoint auto-injects its editor CSS (the muya.ts
+// module imports its stylesheets at load time). Desktop themes still target the
+// legacy `ag-*` DOM (theme migration is a separate phase), so minor visual
+// differences against the new `mu-*` DOM are expected.
+import '@muyajs/core'
 import '@/assets/themes/codemirror/one-dark.css'
 import { Close as CloseIcon } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
 const STANDAR_Y = 320
+
+// Map the desktop language preference to the engine's bundled locale objects.
+const MUYA_LOCALES: Record<string, ILocale> = {
+  en,
+  de,
+  es,
+  fr,
+  ja,
+  ko,
+  pt,
+  'zh-CN': zhCN,
+  'zh-TW': zhTW
+}
+
+const getMuyaLocale = (language: string): ILocale => MUYA_LOCALES[language] ?? en
+
+// `Muya.use(...)` appends to the static `Muya.plugins` array, and every
+// `init()` instantiates the full list. Registration is process-global, so guard
+// it with a module-level flag — otherwise remounting this component in the same
+// renderer (window reuse / HMR) would register duplicate plugins and spawn
+// duplicate UI handlers. The per-plugin option closures (imageAction/jumpClick)
+// only read app-singleton Pinia stores, so capturing them once is correct.
+let muyaPluginsRegistered = false
 
 // Muya remains untyped; everything that crosses the editor boundary is `any`
 // for now. We keep the spelling near the top of the file so future muya-side
@@ -183,6 +229,7 @@ const {
   spellcheckerEnabled,
   spellcheckerNoUnderline,
   spellcheckerLanguage,
+  language,
 
   // Edit modes
   typewriter,
@@ -191,7 +238,7 @@ const {
 } = storeToRefs(preferencesStore)
 
 // Editor store refs
-const { currentFile } = storeToRefs(editorStore)
+const { currentFile, tabs } = storeToRefs(editorStore)
 
 // Project store refs
 const { projectTree } = storeToRefs(projectStore)
@@ -218,6 +265,158 @@ let printer: any = null
 let spellchecker: any = null
 let switchLanguageCommand: any = null
 let imageViewer: SimpleImageViewer | null = null
+// The engine has no `scroll` event; we listen on the scroll container directly.
+let scrollHandler: ((e: Event) => void) | null = null
+
+// The engine's undo/redo history (`getHistory()`) has a different shape than
+// the desktop store's `tab.history` (which drives the save/dirty tracking and
+// is migrated separately). We therefore keep the real engine history in a
+// per-tab map here for restoration across in-session tab switches, and feed the
+// store a SYNTHETIC desktop-shaped history.
+const engineHistoryByTab = new Map<string, unknown>()
+
+// Per-tab monotonic save-tracking id allocator. The synthetic history entry id
+// is a MONOTONIC, never-reused id keyed on the live document content (see
+// `syntheticHistory.ts`), NOT the engine undo-stack depth: depth is reused
+// across distinct documents at the same stack height, which falsely showed a
+// divergently re-edited tab as clean (Phase G — G6). Reset whenever the engine
+// reloads the document via `setContent` (which clears the engine history), so
+// the reloaded content is the id-0 baseline matching the store's seeded
+// `lastSavedHistoryId: 0`.
+const syntheticHistoryByTab = new Map<string, SyntheticHistory>()
+const getSyntheticHistory = (id: string, baselineContent: string): SyntheticHistory => {
+  let tracker = syntheticHistoryByTab.get(id)
+  if (!tracker) {
+    tracker = new SyntheticHistory(baselineContent)
+    syntheticHistoryByTab.set(id, tracker)
+  }
+  return tracker
+}
+// Re-baseline a tab's id allocator to the given content (id 0). Called after
+// `setContent` reloads the document so the freshly loaded content is clean.
+const resetSyntheticHistory = (id: string, baselineContent: string): void => {
+  syntheticHistoryByTab.set(id, new SyntheticHistory(baselineContent))
+}
+const makeSyntheticHistory = (id: string, content: string): IFileHistoryLike => {
+  return getSyntheticHistory(id, content).build(content)
+}
+// Drop per-tab bookkeeping for tabs that no longer exist. Tab ids are unique
+// over the session, so without pruning these maps (and the content -> id map
+// each `SyntheticHistory` holds) would grow unbounded as tabs are opened and
+// closed. Driven by a watcher on the store's live tab id set.
+const pruneClosedTabState = (liveTabIds: Set<string>): void => {
+  for (const id of engineHistoryByTab.keys()) {
+    if (!liveTabIds.has(id)) engineHistoryByTab.delete(id)
+  }
+  for (const id of syntheticHistoryByTab.keys()) {
+    if (!liveTabIds.has(id)) syntheticHistoryByTab.delete(id)
+  }
+}
+
+interface SelectionFormatLike {
+  type: string
+  [key: string]: unknown
+}
+
+// Container `blockName` → legacy `functionType`. The engine's affiliation
+// entries carry `blockName` but not the legacy `functionType` the desktop
+// menu-state builder keys off for `pre`/`figure` containers (table detection +
+// Format-menu disable). Re-derive it here so `createApplicationMenuState`'s
+// existing `pre`/`figure` branches fire. The `code$` / `multiplemath` /
+// `frontmatter` / `html` / `table` values match the legacy muyajs vocabulary
+// (`createApplicationMenuState`'s `/frontmatter|html|multiplemath|code$/` test
+// and `=== 'table'` check).
+const CONTAINER_FUNCTION_TYPE: Record<string, string> = {
+  'code-block': 'fencecode',
+  frontmatter: 'frontmatter',
+  table: 'table',
+  'html-block': 'html',
+  'math-block': 'multiplemath'
+}
+
+interface EngineAffiliationEntry {
+  type: string
+  blockName: string
+  listType?: string
+  listItemType?: string
+  isLooseListItem?: boolean
+  [key: string]: unknown
+}
+
+// The engine's `selection-change` payload (since #4410) carries an
+// `affiliation` chain (shared-ancestor paragraph-type blocks, outermost-first)
+// plus per-endpoint `anchorBlockInfo`/`focusBlockInfo` describing the content
+// leaf (`type: 'span'` + `functionType`), alongside the live `anchorBlock`/
+// `focusBlock` refs (which carry `.text`). The desktop's application-menu state
+// builder (`createApplicationMenuState`) and the selected-text derivation in
+// `SELECTION_CHANGE` were written against the legacy `{ start, end, affiliation }`
+// shape, so map the new payload onto it:
+//   - `start.type`/`end.type` from the leaf info (`'span'`) so the
+//     `start.type === 'span'` guards fire,
+//   - `start.block.functionType`/`end.block.functionType` from the leaf info so
+//     code-content / table-cell detection lights up,
+//   - `start.block.text`/`end.block.text` from the live block so the store can
+//     still slice the selected text (`SELECTION_CHANGE` → search prefill),
+//   - `affiliation` straight through (entries already carry `type` +
+//     `listType`/`listItemType`/`isLooseListItem`), surfacing a derived
+//     `functionType` on `pre`/`figure` containers for table / code-fence keys.
+const adaptSelectionChange = (changes: MuyaChange) => {
+  const anchorPath = (changes.anchorPath ?? []) as Array<string | number>
+  const focusPath = (changes.focusPath ?? anchorPath) as Array<string | number>
+  const anchorBlock = changes.anchorBlock as { text?: string } | null | undefined
+  const focusBlock = changes.focusBlock as { text?: string } | null | undefined
+  const anchorInfo = changes.anchorBlockInfo as
+    | { type?: string; functionType?: string }
+    | null
+    | undefined
+  const focusInfo = changes.focusBlockInfo as
+    | { type?: string; functionType?: string }
+    | null
+    | undefined
+  const rawAffiliation = (changes.affiliation ?? []) as EngineAffiliationEntry[]
+  const affiliation = rawAffiliation.map((entry) => {
+    const functionType =
+      entry.type === 'pre' || entry.type === 'figure'
+        ? CONTAINER_FUNCTION_TYPE[entry.blockName]
+        : undefined
+    return functionType ? { ...entry, functionType } : entry
+  })
+  return {
+    start: {
+      key: anchorPath.join('/'),
+      offset: (changes.anchor?.offset ?? 0) as number,
+      block: { text: anchorBlock?.text, functionType: anchorInfo?.functionType },
+      type: anchorInfo?.type
+    },
+    end: {
+      key: focusPath.join('/'),
+      offset: (changes.focus?.offset ?? 0) as number,
+      block: { text: focusBlock?.text, functionType: focusInfo?.functionType },
+      type: focusInfo?.type
+    },
+    affiliation
+  }
+}
+
+// Build a JSON-serializable cursor from the engine selection (drop the live
+// block references so it survives the buffered-state round-trip). `setCursor`
+// re-resolves the target blocks from `anchorPath`/`focusPath`.
+const serializeCursor = (
+  selection: {
+    anchor?: { offset: number }
+    focus?: { offset: number }
+    anchorPath?: Array<string | number>
+    focusPath?: Array<string | number>
+  } | null
+) => {
+  if (!selection) return null
+  return {
+    anchor: selection.anchor ? { offset: selection.anchor.offset } : null,
+    focus: selection.focus ? { offset: selection.focus.offset } : null,
+    anchorPath: selection.anchorPath,
+    focusPath: selection.focusPath
+  }
+}
 
 class SimpleImageViewer {
   container: HTMLElement
@@ -300,6 +499,16 @@ class SimpleImageViewer {
 }
 
 // Watchers
+// Prune per-tab engine/synthetic history bookkeeping when tabs close, so the
+// maps don't accumulate stale entries (and their content -> id maps) over a long
+// session. Watching the id set keeps this cheap — it only fires on tab add/close.
+watch(
+  () => tabs.value.map((t) => t.id),
+  (ids) => {
+    pruneClosedTabState(new Set(ids))
+  }
+)
+
 watch(typewriter, (value) => {
   if (value) {
     scrollToCursor()
@@ -542,13 +751,28 @@ watch(currentFile, (value, oldValue) => {
   }
 })
 
-watch(sourceCode, (value, oldValue) => {
-  if (value && value !== oldValue) {
-    if (editor.value) {
-      editor.value.hideAllFloatTools()
+watch(
+  sourceCode,
+  (value, oldValue) => {
+    if (value && value !== oldValue) {
+      if (editor.value) {
+        editor.value.hideAllFloatTools()
+        // Compute the WYSIWYG caret as a source-markdown `{ line, ch }` index
+        // cursor JUST-IN-TIME, only when entering source mode (Phase G — G7),
+        // and write it to the tab before sourceCode.vue mounts (`flush: 'sync'`
+        // runs this before the `v-if`-gated child reads `props.muyaIndexCursor`
+        // in its onMounted). This is the inverse of the `setCursorByOffset`
+        // source -> WYSIWYG path. Computing it here rather than on every
+        // json-change/selection-change avoids serializing the whole document on
+        // each keystroke/caret move, and guarantees a fresh (never stale) value.
+        if (currentFile.value) {
+          currentFile.value.muyaIndexCursor = editor.value.getCursorOffset() ?? null
+        }
+      }
     }
-  }
-})
+  },
+  { flush: 'sync' }
+)
 
 // Methods
 const jumpClick = (linkInfo: { href: string }) => {
@@ -688,6 +912,13 @@ const imageAction = async (
   return destImagePath
 }
 
+// Adapt the engine's `imageAction` contract (`{ src, alt, title }`) to the
+// desktop's `imageAction(image, id, alt)`. The engine handles a single inline
+// image edit (no `id` round-trip / source-mode bus event), so we pass `null`
+// for `id`.
+const muyaImageAction = (state: { src: string; alt?: string; title?: string }): Promise<string> =>
+  imageAction(state.src, null, state.alt ?? '')
+
 const imagePathPicker = () => {
   return editorStore.ASK_FOR_IMAGE_PATH()
 }
@@ -759,7 +990,7 @@ const openSpellcheckerLanguageCommand = () => {
 const replaceMisspelling = (payload: unknown) => {
   const { word, replacement } = payload as { word: string; replacement: string }
   if (editor.value) {
-    editor.value._replaceCurrentWordInlineUnsafe(word, replacement)
+    editor.value.replaceCurrentWordInlineUnsafe(word, replacement)
   }
 }
 
@@ -780,7 +1011,7 @@ const handleSelectAll = () => {
     return
   }
 
-  if (editor.value && (editor.value.hasFocus() || editor.value.contentState.selectedTableCells)) {
+  if (editor.value && editor.value.hasFocus()) {
     editor.value.selectAll()
   } else {
     const activeElement = document.activeElement as HTMLElement | null
@@ -794,10 +1025,19 @@ const handleSelectAll = () => {
   }
 }
 
-// Custom copyAsRich copyAsHtml pasteAsPlainText
+// Custom copyAsRich copyAsHtml pasteAsPlainText.
+// `copyAsRich` writes the rendered HTML to `text/html` AND the plain text to
+// `text/plain`, so pasting into Word/email yields formatted rich text (whereas
+// `copyAsHtml` blanks `text/html` and puts the HTML source into `text/plain`).
+const COPY_PASTE_METHOD_MAP: Record<string, 'copyAsRich' | 'copyAsHtml' | 'pasteAsPlainText'> = {
+  copyAsRich: 'copyAsRich',
+  copyAsHtml: 'copyAsHtml',
+  pasteAsPlainText: 'pasteAsPlainText'
+}
 const handleCopyPaste = (type: unknown) => {
   if (editor.value) {
-    editor.value[type as string]()
+    const method = COPY_PASTE_METHOD_MAP[type as string]
+    if (method) editor.value[method]()
   }
 }
 
@@ -807,17 +1047,32 @@ const insertImage = (src: unknown) => {
   }
 }
 
+// muya's search/replace/find return the live Search instance (circular:
+// Search -> muya -> ... -> ScrollPage) and each match carries a live `block`
+// reference. The store deep-clones (JSON.stringify) its payload, so extract
+// only the plain { index, matches, value } the search UI needs.
+const toSearchMatches = (result: unknown) => {
+  const r = (result ?? {}) as {
+    index?: number
+    value?: string
+    matches?: Array<{ start: number; end: number; match: string }>
+  }
+  return {
+    index: r.index ?? -1,
+    matches: (r.matches ?? []).map((m) => ({ start: m.start, end: m.end, match: m.match })),
+    value: r.value ?? ''
+  }
+}
+
 const handleSearch = (payload: unknown) => {
   const { value, opt } = payload as { value: string; opt: unknown }
-  const searchMatches = editor.value.search(value, opt)
-  editorStore.SEARCH(searchMatches)
+  editorStore.SEARCH(toSearchMatches(editor.value.search(value, opt)))
   scrollToHighlight()
 }
 
 const handReplace = (payload: unknown) => {
   const { value, opt } = payload as { value: string; opt: unknown }
-  const searchMatches = editor.value.replace(value, opt)
-  editorStore.SEARCH(searchMatches)
+  editorStore.SEARCH(toSearchMatches(editor.value.replace(value, opt)))
 }
 
 const handleUploadedImage = (url: unknown, deletionUrl?: unknown) => {
@@ -825,27 +1080,55 @@ const handleUploadedImage = (url: unknown, deletionUrl?: unknown) => {
   editorStore.SHOW_IMAGE_DELETION_URL(deletionUrl as string)
 }
 
+// `muya.domNode` is the contenteditable + scroll container (it inherits the
+// `.editor-component` class from the original mount point and `overflow:auto`).
+// The legacy engine exposed the same element as `muya.container`.
+const getScrollContainer = (): HTMLElement | null =>
+  (editor.value?.domNode as HTMLElement | undefined) ?? null
+
+// Viewport-relative caret rect (mirrors the engine's `Selection.getCursorCoords`
+// / legacy `cursorCoords`). Used for typewriter + keep-cursor-visible scrolling
+// when we are not inside a `selection-change` event (which already supplies it).
+const getCursorY = (): number | null => {
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return null
+  const range = sel.getRangeAt(0).cloneRange()
+  let rects = range.getClientRects()
+  if (rects.length === 0 && range.startContainer) {
+    const parent =
+      range.startContainer.nodeType === Node.ELEMENT_NODE
+        ? (range.startContainer as Element)
+        : range.startContainer.parentElement
+    rects = parent ? parent.getClientRects() : rects
+  }
+  return rects.length ? rects[0].y : null
+}
+
 const scrollToCursor = (duration = 300) => {
   nextTick(() => {
-    const { container } = editor.value
+    const container = getScrollContainer()
     if (!container) return
-    const { y } = editor.value.getSelection().cursorCoords
+    const y = getCursorY()
+    if (y == null) return
     animatedScrollTo(container, container.scrollTop + y - STANDAR_Y, duration)
   })
 }
 
 const scrollToCords = (y: number) => {
-  const { container } = editor.value
+  const container = getScrollContainer()
+  if (!container) return
   // Depending on how much the user previously scrolled, sometimes the container has not fully rendered all elements.
   // Hence, container.scrollHeight < [saved scrollTop]
   // What we need to do is to temporarily add a padding to the container so that we can actually set the scrollTop without getting clamped.
 
   const maxScrollHeight = container.scrollHeight - container.clientHeight // max scroll height is actually calculated as such
   if (y > maxScrollHeight) {
-    const editorId = container.firstElementChild
-    editorId.style.paddingBottom = `${y - maxScrollHeight + 100}px` // 100px is the default ag-editor-id padding
-    // attach a resize observer so we know when to remove the padding when it is of the "correct" height
-    resizeObserverForEditor.observe(editorId)
+    const editorId = container.firstElementChild as HTMLElement | null
+    if (editorId) {
+      editorId.style.paddingBottom = `${y - maxScrollHeight + 100}px` // 100px is the default editor padding
+      // attach a resize observer so we know when to remove the padding when it is of the "correct" height
+      resizeObserverForEditor.observe(editorId)
+    }
   }
   requestAnimationFrame(() => {
     if (!container) return
@@ -857,7 +1140,7 @@ const scrollToCords = (y: number) => {
 }
 
 const scrollToHighlight = () => {
-  return scrollToElement('.ag-highlight')
+  return scrollToElement('.mu-highlight')
 }
 
 const scrollToHeader = (slug: unknown) => {
@@ -866,7 +1149,8 @@ const scrollToHeader = (slug: unknown) => {
 
 const scrollToElement = (selector: string) => {
   // Scroll to search highlight word
-  const { container } = editor.value
+  const container = getScrollContainer()
+  if (!container) return
   const anchor = document.querySelector(selector)
   if (anchor) {
     const { y } = anchor.getBoundingClientRect()
@@ -876,8 +1160,7 @@ const scrollToElement = (selector: string) => {
 }
 
 const handleFindAction = (action: unknown) => {
-  const searchMatches = editor.value.find(action)
-  editorStore.SEARCH(searchMatches)
+  editorStore.SEARCH(toSearchMatches(editor.value.find(action)))
   scrollToHighlight()
 }
 
@@ -896,7 +1179,7 @@ interface ExportOptions {
 
 const handleExport = async (options: unknown) => {
   const opts = options as ExportOptions
-  const { type, header, footer, headerFooterStyled, htmlTitle } = opts
+  const { type, headerFooterStyled, htmlTitle } = opts
 
   if (!/^pdf|print|styledHtml$/.test(type)) {
     throw new Error(`Invalid type to export: "${type}".`)
@@ -904,11 +1187,14 @@ const handleExport = async (options: unknown) => {
 
   const extraCss = await getCssForOptions(opts as unknown as PdfCssOptions)
   const htmlToc = getHtmlToc(editor.value.getTOC(), opts as unknown as HtmlTocOptions)
+  const markdown = editor.value.getMarkdown()
+  const header = (opts.header ?? null) as HeaderFooterPart | null
+  const footer = (opts.footer ?? null) as HeaderFooterPart | null
 
   switch (type) {
     case 'styledHtml': {
       try {
-        const content = await editor.value.exportStyledHTML({
+        const content = await exportStyledHTML(editor.value, markdown, {
           title: htmlTitle || '',
           printOptimization: false,
           extraCss,
@@ -937,14 +1223,14 @@ const handleExport = async (options: unknown) => {
           isLandscape
         }
 
-        const html = await editor.value.exportStyledHTML({
+        const html = await exportStyledHTML(editor.value, markdown, {
           title: '',
           printOptimization: true,
           extraCss,
           toc: htmlToc,
           header,
           footer,
-          headerFooterStyled
+          headerFooterStyled: headerFooterStyled as boolean | undefined
         })
         printer.renderMarkdown(html, true)
         editorStore.EXPORT({ type, pageOptions })
@@ -962,14 +1248,14 @@ const handleExport = async (options: unknown) => {
     case 'print': {
       // NOTE: Print doesn't support page size or orientation.
       try {
-        const html = await editor.value.exportStyledHTML({
+        const html = await exportStyledHTML(editor.value, markdown, {
           title: '',
           printOptimization: true,
           extraCss,
           toc: htmlToc,
           header,
           footer,
-          headerFooterStyled
+          headerFooterStyled: headerFooterStyled as boolean | undefined
         })
         printer.renderMarkdown(html, true)
         editorStore.PRINT_RESPONSE()
@@ -1033,24 +1319,35 @@ const handleDialogTableConfirm = () => {
 }
 
 interface FileLoadedPayload {
+  id?: string
   markdown?: string
   cursor?: unknown
 }
 
 // listen for `open-single-file` event, it will call this method only when open a new file.
 const setMarkdownToEditor = (payload: unknown) => {
-  const { markdown: newMarkdown, cursor: newCursor } = (payload ?? {}) as FileLoadedPayload
+  const { id, markdown: newMarkdown, cursor: newCursor } = (payload ?? {}) as FileLoadedPayload
   if (editor.value) {
-    editor.value.clearHistory()
+    // `setContent` resets the document and clears the undo history; only set a
+    // cursor afterwards (a freshly-opened file has no history to restore).
+    editor.value.setContent(newMarkdown ?? '')
+    // The freshly loaded content is this tab's clean baseline (id 0). Re-seed
+    // the monotonic save-tracking allocator so undoing an edit back to this
+    // content reads as clean again (matches the store's `lastSavedHistoryId: 0`).
+    // Seed from the engine's OWN serialization of the loaded document (not the
+    // raw payload) so it matches the markdown later emitted on `json-change`
+    // — the engine may normalize trailing newlines / whitespace on round-trip.
+    if (id) {
+      resetSyntheticHistory(id, editor.value.getMarkdown())
+    }
     if (newCursor) {
-      editor.value.setMarkdown(newMarkdown, newCursor, true)
-    } else {
-      editor.value.setMarkdown(newMarkdown)
+      editor.value.setCursor(newCursor)
     }
   }
 }
 
 interface FileChangePayload {
+  id?: string
   markdown?: string
   cursor?: unknown
   renderCursor?: boolean
@@ -1060,39 +1357,99 @@ interface FileChangePayload {
   blocks?: unknown
 }
 
+// A source-mode (CodeMirror) index cursor: `{ anchor, focus }` in `{ line, ch }`
+// coordinates. Produced by sourceCode.vue and carried on `file-changed` as
+// `muyaIndexCursor` when handing a tab back to WYSIWYG. Both `line` AND `ch`
+// must be present numbers — otherwise the engine would clamp a missing `ch` to
+// 0 and silently restore the caret to the wrong column.
+const isIndexPosition = (pos: unknown): pos is { line: number; ch: number } => {
+  const p = pos as { line?: unknown; ch?: unknown } | null
+  return !!p && typeof p.line === 'number' && typeof p.ch === 'number'
+}
+const isIndexCursor = (
+  cursor: unknown
+): cursor is { anchor: { line: number; ch: number }; focus: { line: number; ch: number } } => {
+  const c = cursor as { anchor?: unknown; focus?: unknown } | null
+  return !!c && isIndexPosition(c.anchor) && isIndexPosition(c.focus)
+}
+
 // listen for markdown change form source mode or change tabs etc
 const handleFileChange = (payload: unknown) => {
   const {
+    id,
     markdown: newMarkdown,
     cursor: newCursor,
-    renderCursor,
-    history,
-    scrollTop,
     muyaIndexCursor,
-    blocks = undefined
+    history: payloadHistory,
+    scrollTop
   } = (payload ?? {}) as FileChangePayload
-  const { container } = editor.value
+  if (!editor.value) return
+  const container = getScrollContainer()
+  if (!container) return
 
-  if (editor.value) {
-    if (history) {
-      editor.value.setHistory(history)
-    }
+  if (typeof newMarkdown === 'string') {
+    // Returning from source-code mode: the WYSIWYG engine is never unmounted
+    // while source mode is up (index.vue overlays it via `v-if`), so it still
+    // holds the PRE-source-mode document and undo history. Record the bulk
+    // source-mode edit as a SINGLE engine undo boundary via `replaceContent`
+    // (PG14 parity): the first Ctrl+Z after the handoff reverts the entire
+    // source-mode change in one step, matching legacy muyajs' full-state
+    // snapshot history. `replaceContent` builds a fully-invertible whole-document
+    // ot-json1 op and applies undo/redo via a full block-tree rebuild (never the
+    // incremental pick/drop walker), so arbitrary block-type changes round-trip
+    // safely.
+    //
+    // Detection: only sourceCode.vue's onBeforeUnmount emits `file-changed` with
+    // a source-mode index cursor AND no block-key `cursor` AND no `history`
+    // (see sourceCode.vue ~L368). Every tab-switch / file-reload emitter in
+    // editor.ts carries both `cursor` and `history` alongside, so requiring
+    // those absent reliably isolates the WYSIWYG<-source handoff from a tab
+    // activation that merely replays a tab's persisted `muyaIndexCursor`.
+    const isSourceModeHandoff =
+      isIndexCursor(muyaIndexCursor) && !newCursor && payloadHistory == null
 
-    if (typeof newMarkdown === 'string') {
-      editor.value.setMarkdown(newMarkdown, newCursor, renderCursor, muyaIndexCursor, blocks)
-    } else if (newCursor) {
-      editor.value.setCursor(newCursor)
-    }
-
-    if (typeof scrollTop === 'number') {
-      container.style.visibility = 'hidden'
-      container.style.pointerEvents = 'none'
-      scrollToCords(scrollTop)
+    if (isSourceModeHandoff) {
+      // Record the bulk source-mode edit as a single undo boundary. When the
+      // document is unchanged this is a no-op (returns false) and the existing
+      // history/content already match — either way the caret still needs
+      // remapping below.
+      editor.value.replaceContent(newMarkdown)
+      // Map the CodeMirror `{ line, ch }` cursor onto a block-key cursor so the
+      // WYSIWYG caret lands where the source-mode cursor was (PG2).
+      editor.value.setCursorByOffset(muyaIndexCursor)
     } else {
-      container.style.visibility = 'visible'
-      container.style.pointerEvents = 'auto'
-      scrollToCursor(0)
+      // Tab switch / programmatic content swap: `setContent` replaces the
+      // document and clears history, so restore the real engine history (kept
+      // per-tab) afterwards — preserves undo/redo on in-session tab switch. The
+      // `history` in the payload is the synthetic desktop-shaped history used
+      // for save tracking, not the engine history.
+      editor.value.setContent(newMarkdown)
+      if (newCursor) {
+        editor.value.setCursor(newCursor)
+      } else if (isIndexCursor(muyaIndexCursor)) {
+        // Source-mode handoff for a tab the engine has no history for (e.g.
+        // first interaction after load): fall back to a caret-only remap. The
+        // engine runs its own setContent dance internally, so restore the
+        // history after.
+        editor.value.setCursorByOffset(muyaIndexCursor)
+      }
+      const savedEngineHistory = id ? engineHistoryByTab.get(id) : undefined
+      if (savedEngineHistory) {
+        editor.value.setHistory(savedEngineHistory)
+      }
     }
+  } else if (newCursor) {
+    editor.value.setCursor(newCursor)
+  }
+
+  if (typeof scrollTop === 'number') {
+    container.style.visibility = 'hidden'
+    container.style.pointerEvents = 'none'
+    scrollToCords(scrollTop)
+  } else {
+    container.style.visibility = 'visible'
+    container.style.pointerEvents = 'auto'
+    scrollToCursor(0)
   }
 }
 
@@ -1108,6 +1465,18 @@ const focusEditor = () => {
   editor.value?.focus()
 }
 
+// When a focus-trapping modal (the command palette) opens, release the editor's
+// contenteditable focus first. element-plus's el-dialog restores focus to the
+// previously focused element on close; restoring it into the engine's
+// contenteditable while its selection is uncommitted makes the focus-trap and
+// the engine's selection handling fight, freezing the renderer. Blurring up
+// front removes the editor as the restore target and avoids the loop.
+const handleModalOpening = () => {
+  if (editor.value && editor.value.hasFocus()) {
+    editor.value.blur(true, true)
+  }
+}
+
 const handleScreenShot = () => {
   if (editor.value) {
     document.execCommand('paste')
@@ -1115,7 +1484,8 @@ const handleScreenShot = () => {
 }
 
 const handleResetPaddingBottom = () => {
-  const { container } = editor.value
+  const container = getScrollContainer()
+  if (!container) return
   const firstChild = container.firstElementChild as HTMLElement | null
   if (!firstChild) return
   const newScollableHeightWithoutPadding =
@@ -1129,7 +1499,7 @@ const handleResetPaddingBottom = () => {
 
 const handleLanguageChanged = () => {
   if (editor.value) {
-    editor.value.setOptions({ t })
+    editor.value.locale(getMuyaLocale(language.value))
   }
 }
 const resizeObserverForEditor = new ResizeObserver(handleResetPaddingBottom)
@@ -1137,27 +1507,42 @@ const resizeObserverForEditor = new ResizeObserver(handleResetPaddingBottom)
 onMounted(() => {
   printer = new Printer()
   const ele = editorRef.value
+  if (!ele) return
 
-  // use muya UI plugins
-  Muya.use(TablePicker)
-  Muya.use(QuickInsert)
-  Muya.use(CodePicker)
-  Muya.use(EmojiPicker)
-  Muya.use(ImagePathPicker)
-  Muya.use(ImageSelector)
-  Muya.use(Transformer)
-  Muya.use(ImageToolbar)
-  Muya.use(FormatPicker)
-  Muya.use(FrontMenu)
-  Muya.use(LinkTools, {
-    jumpClick
-  })
-  Muya.use(FootnoteTool)
-  Muya.use(TableBarTools)
+  // Register the engine UI plugins once per renderer process (see
+  // `muyaPluginsRegistered`). The image-edit tool receives the desktop's image
+  // callbacks; LinkTools receives the ctrl/cmd-click jump handler.
+  if (!muyaPluginsRegistered) {
+    muyaPluginsRegistered = true
+    Muya.use(TableChessboard)
+    Muya.use(ParagraphQuickInsertMenu)
+    Muya.use(CodeBlockLanguageSelector)
+    Muya.use(EmojiSelector)
+    Muya.use(ImagePathPicker)
+    Muya.use(ImageEditTool, {
+      imageAction: muyaImageAction,
+      imagePathPicker,
+      imagePathAutoComplete
+    })
+    Muya.use(ImageResizeBar)
+    Muya.use(ImageToolBar)
+    Muya.use(InlineFormatToolbar)
+    Muya.use(ParagraphFrontButton)
+    Muya.use(ParagraphFrontMenu)
+    Muya.use(PreviewToolBar)
+    Muya.use(LinkTools, {
+      jumpClick
+    })
+    Muya.use(FootnoteTool)
+    Muya.use(TableColumnToolbar)
+    Muya.use(TableDragBar)
+    Muya.use(TableRowColumMenu)
+  }
 
   const options: Record<string, unknown> = {
     focusMode: focus.value,
     markdown: props.markdown,
+    locale: getMuyaLocale(language.value),
     preferLooseListItem: preferLooseListItem.value,
     autoPairBracket: autoPairBracket.value,
     autoPairMarkdownSyntax: autoPairMarkdownSyntax.value,
@@ -1180,11 +1565,14 @@ onMounted(() => {
     autoCheck: autoCheck.value,
     sequenceTheme: sequenceTheme.value,
     spellcheckEnabled: spellcheckerEnabled.value,
-    imageAction,
-    imagePathPicker,
+    // Resolve the OS clipboard to a local file path on paste (image-from-file).
     clipboardFilePath: guessClipboardFilePath,
-    imagePathAutoComplete,
-    t // Add the translation function
+    // Image-persist callbacks read by the engine's clipboard + drag-drop handlers
+    // from `muya.options.*` (distinct from the ImageEditTool plugin option above).
+    // Without these, local-file drag-drop, screenshot/binary clipboard paste, and
+    // copy-to-assets on a pasted image file silently no-op or insert raw paths.
+    imageAction: muyaImageAction,
+    getPathForFile: (file: File) => window.electron.webUtils.getPathForFile(file)
   }
 
   if (/dark/i.test(theme.value)) {
@@ -1199,11 +1587,19 @@ onMounted(() => {
     })
   }
 
-  editor.value = new Muya(ele, options)
+  // `markRaw` keeps Vue from wrapping the Muya instance in a reactive Proxy.
+  // The engine stores live DOM nodes and block-tree references and patches the
+  // DOM via snabbdom; proxying them silently breaks identity checks so the
+  // document tree never renders.
+  const muya = markRaw(new Muya(ele, options))
+  // The new engine requires an explicit init() after construction (it builds
+  // the document tree and instantiates the registered UI plugins).
+  muya.init()
+  editor.value = muya
 
-  const { container } = editor.value
+  const container = getScrollContainer()!
 
-  // Listen for language changes and update Muya's translation function
+  // Listen for language changes and update the engine locale.
   bus.on('language-changed', handleLanguageChanged)
 
   // Create spell check wrapper and enable spell checking if preferred.
@@ -1244,28 +1640,55 @@ onMounted(() => {
   bus.on('insertParagraph', handleInsertParagraph)
   bus.on('scroll-to-header', scrollToHeader)
   bus.on('screenshot-captured', handleScreenShot)
+  bus.on('show-command-palette', handleModalOpening)
   bus.on('switch-spellchecker-language', switchSpellcheckLanguage)
   bus.on('open-command-spellchecker-switch-language', openSpellcheckerLanguageCommand)
   bus.on('replace-misspelling', replaceMisspelling)
 
-  editor.value.on('change', (changes: MuyaChange) => {
+  // The engine emits a low-level `json-change` ({ op, source, prevDoc, doc })
+  // on every document mutation; the desktop's content-change pipeline wants the
+  // derived document snapshot (markdown / word count / cursor / history / TOC /
+  // block AST), so we compute it here — mirroring the legacy engine's
+  // `dispatchChange` payload.
+  editor.value.on('json-change', () => {
     // There is a chance that this event is fired AFTER the tab is switched. If we purely rely on this.currentFile later on
     // it can cause invalid updates. Hence, we need the id to identify changes as part of each tab
-    if (!currentFile.value) return
+    if (!currentFile.value || !editor.value) return
     const { id } = currentFile.value
-    if (id) {
-      editorStore.LISTEN_FOR_CONTENT_CHANGE(
-        Object.assign(changes, { id, blocks: editor.value.contentState.getBlocks() })
-      )
-    }
+    if (!id) return
+    const markdown = editor.value.getMarkdown()
+    // Stash the real engine history for in-session tab-switch restoration. The
+    // synthetic save-tracking id is derived from the live document content (a
+    // monotonic, never-reused id — see `syntheticHistory.ts`), NOT the engine
+    // undo-stack depth, which is reused and falsely showed a divergently
+    // re-edited tab as clean (Phase G — G6).
+    const engineHistory = editor.value.getHistory()
+    engineHistoryByTab.set(id, engineHistory)
+    editorStore.LISTEN_FOR_CONTENT_CHANGE({
+      id,
+      markdown,
+      wordCount: muyaWordCount(markdown),
+      cursor: serializeCursor(editor.value.getSelection()),
+      // Synthetic, desktop-shaped history so the store's save/dirty tracking
+      // keeps working (the engine history shape is incompatible).
+      history: makeSyntheticHistory(id, markdown),
+      toc: editor.value.getTOC(),
+      blocks: editor.value.getState()
+    })
   })
 
-  editor.value.on('scroll', (scrollEvent: { scrollTop: number }) => {
+  // The engine does not emit `scroll`; listen on the scroll container directly
+  // so the desktop can persist each tab's scroll position.
+  scrollHandler = () => {
     if (currentFile.value) {
-      editorStore.updateScrollPosition(currentFile.value.id, scrollEvent.scrollTop)
+      editorStore.updateScrollPosition(currentFile.value.id, container.scrollTop)
     }
-  })
+  }
+  container.addEventListener('scroll', scrollHandler, { passive: true })
 
+  // Clicking the hover-to-copy affordance on a heading emits `heading-copy-link`
+  // with the heading's stable slug; copy the matching GitHub anchor to the
+  // clipboard (resolved via `listToc.find(i => i.slug === key)`).
   editor.value.on('heading-copy-link', ({ key }: { key: string }) => {
     editorStore.copyGithubSlug(key)
   })
@@ -1301,31 +1724,33 @@ onMounted(() => {
     }
   })
 
-  editor.value.on('selectionChange', (changes: MuyaChange) => {
-    const { y } = changes.cursorCoords as { y: number }
-    if (typewriter.value) {
-      const startPosition = container.scrollTop
-      const toPosition = startPosition + y - STANDAR_Y
+  editor.value.on('selection-change', (changes: MuyaChange) => {
+    const y = (changes.cursorCoords?.y ?? null) as number | null
+    if (y != null) {
+      if (typewriter.value) {
+        const startPosition = container.scrollTop
+        const toPosition = startPosition + y - STANDAR_Y
 
-      // Prevent micro shakes and unnecessary scrolling.
-      if (Math.abs(startPosition - toPosition) > 2) {
-        animatedScrollTo(container, toPosition, 100)
+        // Prevent micro shakes and unnecessary scrolling.
+        if (Math.abs(startPosition - toPosition) > 2) {
+          animatedScrollTo(container, toPosition, 100)
+        }
+      }
+
+      // Used to fix #628: auto scroll cursor to visible if the cursor is too low.
+      if (container.clientHeight - y < 100) {
+        // editableHeight is the lowest cursor position(till to top) that editor allowed.
+        const editableHeight = container.clientHeight - 100
+        animatedScrollTo(container, container.scrollTop + (y - editableHeight), 0)
       }
     }
 
-    // Used to fix #628: auto scroll cursor to visible if the cursor is too low.
-    if (container.clientHeight - y < 100) {
-      // editableHeight is the lowest cursor position(till to top) that editor allowed.
-      const editableHeight = container.clientHeight - 100
-      animatedScrollTo(container, container.scrollTop + (y - editableHeight), 0)
-    }
-
     selectionChange.value = changes
-    editorStore.SELECTION_CHANGE(changes)
-  })
-
-  editor.value.on('selectionFormats', (formats: MuyaChange) => {
-    editorStore.SELECTION_FORMATS(formats)
+    editorStore.SELECTION_CHANGE(adaptSelectionChange(changes))
+    // The active inline formats now ride along on selection-change (replacing
+    // the old separate `selectionFormats` event) — drive the format menu/toolbar
+    // state from them.
+    editorStore.SELECTION_FORMATS((changes.formats ?? []) as SelectionFormatLike[])
   })
 
   document.addEventListener('keyup', keyup)
@@ -1361,20 +1786,21 @@ onBeforeUnmount(() => {
   bus.off('insertParagraph', handleInsertParagraph)
   bus.off('scroll-to-header', scrollToHeader)
   bus.off('screenshot-captured', handleScreenShot)
+  bus.off('show-command-palette', handleModalOpening)
   bus.off('switch-spellchecker-language', switchSpellcheckLanguage)
   bus.off('open-command-spellchecker-switch-language', openSpellcheckerLanguageCommand)
   bus.off('replace-misspelling', replaceMisspelling)
   bus.off('language-changed', handleLanguageChanged)
 
   document.removeEventListener('keyup', keyup)
-  if (editor.value) {
-    editor.value.off('change')
-    editor.value.off('scroll')
-    editor.value.off('heading-copy-link')
-    editor.value.off('format-click')
-    editor.value.off('selectionChange')
-    editor.value.off('selectionFormats')
+
+  // Remove the manual scroll listener; engine `on(...)` listeners are torn down
+  // by `destroy()` → `eventCenter.unsubscribeAll()`.
+  if (scrollHandler && editor.value) {
+    const container = getScrollContainer()
+    container?.removeEventListener('scroll', scrollHandler)
   }
+  scrollHandler = null
 
   resizeObserverForEditor.disconnect()
 
@@ -1433,6 +1859,11 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   cursor: default;
   overflow-anchor: none !important;
+}
+
+.editor-component .mu-container {
+  padding-top: 20px;
+  padding-bottom: 100vh;
 }
 
 .typewriter .editor-component {

@@ -1,6 +1,7 @@
 import type Content from '../block/base/content';
 import type Parent from '../block/base/parent';
 import type TreeNode from '../block/base/treeNode';
+import type TableCellSelection from '../editor/tableCellSelection';
 import type { Muya } from '../muya';
 import type { TState } from '../state/types';
 import type { Nullable } from '../types';
@@ -15,11 +16,11 @@ import StateToMarkdown from '../state/stateToMarkdown';
 import { isAnyListState, isParagraphState } from '../state/types';
 import { deepClone, isClipboardEvent, isKeyboardEvent } from '../utils';
 import { getClipBoardHtml } from '../utils/marked';
-import { getCopyTextType, isStandaloneTableHtml, normalizePastedHTML } from '../utils/paste';
+import { getClipboardImageFile, getCopyTextType, isStandaloneTableHtml, normalizePastedHTML, readFileAsDataURL, resolveClipboardImagePath } from '../utils/paste';
 import { mergePasteIntoHeading } from './mergePasteIntoHeading';
 
 class Clipboard {
-    public copyType: string = 'normal'; // `normal` or `copyAsMarkdown` or `copyAsHtml` or `copyCodeContent`
+    public copyType: string = 'normal'; // `normal` or `copyAsMarkdown` or `copyAsHtml` or `copyAsRich` or `copyCodeContent`
     public pasteType: string = 'normal'; // `normal` or `pasteAsPlainText`
     public copyInfo: string = '';
 
@@ -96,6 +97,10 @@ class Clipboard {
         fromEvent(domNode, 'keydown').subscribe(keydownHandler);
     }
 
+    get tableSelection(): Nullable<TableCellSelection> {
+        return this.muya.editor?.tableSelection;
+    }
+
     getClipboardData() {
         const { copyType, copyInfo } = this;
         if (copyType === 'copyCodeContent') {
@@ -104,6 +109,11 @@ class Clipboard {
                 text: copyInfo,
             };
         }
+
+        // A frozen cross-cell table selection copies just that rectangle.
+        const tableData = this._getTableSelectionClipboardData();
+        if (tableData != null)
+            return tableData;
 
         let text = '';
         let html = '';
@@ -325,6 +335,40 @@ class Clipboard {
         return { html, text };
     }
 
+    /**
+     * Clipboard payload for a frozen cross-cell table selection, or `null` when
+     * none is active. A single selected cell with text yields its plain text and
+     * no HTML (so a paste lands as literal text, matching legacy
+     * `docCopyHandler`); a larger rectangle serialises to GFM table markdown.
+     */
+    private _getTableSelectionClipboardData(): Nullable<{ html: string; text: string }> {
+        const state = this.tableSelection?.getStateForCopy();
+        if (state == null)
+            return null;
+
+        const isSingleCell
+            = state.children.length === 1 && state.children[0].children.length === 1;
+        if (isSingleCell) {
+            return { html: '', text: state.children[0].children[0].text };
+        }
+
+        const {
+            frontMatter = true,
+            math,
+            isGitlabCompatibilityEnabled,
+            superSubScript,
+        } = this.muya.options;
+        const text = new StateToMarkdown().generate([state]);
+        const html = getClipBoardHtml(text, {
+            frontMatter,
+            math,
+            isGitlabCompatibilityEnabled,
+            superSubScript,
+        });
+
+        return { html, text };
+    }
+
     copyHandler(event: ClipboardEvent): void {
         const { html, text } = this.getClipboardData();
 
@@ -353,6 +397,19 @@ class Clipboard {
                 break;
             }
 
+            // "Copy as Rich Text": put the rendered HTML in the html slot so a
+            // rich-text target (Word, email, contenteditable) renders formatted
+            // content, and keep the markdown source in the plain slot. Mirrors
+            // the `normal` branch; `copyAsHtml` instead blanks text/html and
+            // drops the markup into text/plain as literal source.
+            case 'copyAsRich': {
+                if (text.length === 0)
+                    return;
+                event.clipboardData.setData('text/html', html);
+                event.clipboardData.setData('text/plain', text);
+                break;
+            }
+
             case 'copyAsMarkdown': {
                 if (text.length === 0)
                     return;
@@ -372,6 +429,14 @@ class Clipboard {
     }
 
     cutHandler() {
+        // A frozen cross-cell table selection: empty just those cells in place
+        // (legacy `deleteSelectedTableCells`). The copy half already captured
+        // the rectangle's markdown via `getClipboardData`.
+        if (this.tableSelection?.hasSelection) {
+            this.tableSelection.clearSelectedCells();
+            return;
+        }
+
         const selection = this.selection.getSelection();
         if (selection == null)
             return;
@@ -585,7 +650,19 @@ class Clipboard {
     }
 
     // eslint-disable-next-line complexity
-    async pasteHandler(event: ClipboardEvent): Promise<void> {
+    async pasteHandler(
+        event: ClipboardEvent,
+        // `event.clipboardData` is only valid synchronously while the paste
+        // event is being dispatched. Once `pasteHandler` yields at its first
+        // `await` (the `clipboardFilePath` hook), the browser may detach the
+        // DataTransfer and subsequent `getData()` calls return ''. We snapshot
+        // text/html synchronously below and thread the snapshot through the
+        // `!isSelectionInSameBlock` recursion via these optional params so the
+        // re-entry doesn't read a detached clipboard. Mirrors the legacy
+        // `@muyajs` `pasteHandler(event, type, rawText, rawHtml)` signature.
+        rawText?: string,
+        rawHtml?: string,
+    ): Promise<void> {
         event.preventDefault();
         event.stopPropagation();
 
@@ -604,17 +681,33 @@ class Clipboard {
 
         const { isSelectionInSameBlock, anchorBlock } = selection;
 
-        if (!isSelectionInSameBlock) {
-            this.cutHandler();
-
-            return this.pasteHandler(event);
-        }
-
         if (!anchorBlock || !event.clipboardData)
             return;
 
-        const text = event.clipboardData.getData('text/plain');
-        let html = event.clipboardData.getData('text/html');
+        // Snapshot everything we need from `event.clipboardData`
+        // synchronously, BEFORE any `await` — after the first yield the
+        // DataTransfer can be detached and `getData()` returns ''. On the
+        // `!isSelectionInSameBlock` recursion we reuse the snapshot captured
+        // by the outer call rather than re-reading the (now possibly
+        // detached) clipboard.
+        const text = rawText ?? event.clipboardData.getData('text/plain');
+        let html = rawHtml ?? event.clipboardData.getData('text/html');
+        // Snapshot any in-memory image File (the bitmap / "Copy Image" /
+        // screenshot case, PG05) synchronously too — `clipboardData.files`
+        // is also detached after the first `await`.
+        const imageFile = getClipboardImageFile(event.clipboardData);
+
+        if (!isSelectionInSameBlock) {
+            this.cutHandler();
+
+            return this.pasteHandler(event, text, html);
+        }
+
+        // When the clipboard holds an image — either a file resolved to a path
+        // (PG06) or an in-memory bitmap (PG05) — insert it as an inline image
+        // routed through `imageAction`, short-circuiting the text/HTML paste.
+        if (await this.tryPasteImage(anchorBlock, imageFile))
+            return;
 
         // Support pasted URLs from Firefox.
         if (URL_REG.test(text) && !/\s/.test(text) && !html)
@@ -740,6 +833,87 @@ class Clipboard {
         }
     }
 
+    /**
+     * Insert a pasted image when the clipboard carries one. Tries a resolved
+     * clipboard FILE path first (PG06, via the `clipboardFilePath` hook), then
+     * an in-memory bitmap File (PG05, read as a base64 `data:` URL). Returns
+     * `true` when an image was inserted so the caller skips the text/HTML
+     * paste, `false` to fall through. Ported from the legacy `@muyajs`
+     * `pasteImage` ordering (file path, then binary).
+     */
+    private async tryPasteImage(
+        anchorBlock: Content,
+        imageFile: Nullable<File>,
+    ): Promise<boolean> {
+        const imagePath = await resolveClipboardImagePath(
+            this.muya.options.clipboardFilePath,
+        );
+        if (imagePath) {
+            await this.insertImageSrc(anchorBlock, imagePath);
+            return true;
+        }
+
+        if (imageFile) {
+            const dataUrl = await readFileAsDataURL(imageFile);
+            if (dataUrl) {
+                await this.insertImageSrc(anchorBlock, dataUrl);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Insert a pasted image at the cursor, routing it through the embedder's
+     * `imageAction` first so the user's insert preference (copy-to-assets /
+     * upload / keep-path) applies and a portable src is written. `src` is
+     * either a resolved clipboard file path (PG06) or a `data:` URL for an
+     * in-memory bitmap (PG05). When no `imageAction` is configured the src is
+     * inserted as-is, preserving the legacy file-path behaviour.
+     */
+    private async insertImageSrc(anchorBlock: Content, src: string): Promise<void> {
+        let finalSrc = src;
+        const { imageAction } = this.muya.options;
+        if (imageAction) {
+            const resolved = await imageAction({ src, alt: '', title: '' });
+            if (resolved)
+                finalSrc = resolved;
+        }
+
+        this.insertImageText(anchorBlock, finalSrc);
+    }
+
+    /**
+     * Splice `![](src)` into the anchor block at the current selection.
+     *
+     * Inline images in muya are plain markdown text (`![](src)`) on a content
+     * block; rendering turns the token into an image. We replace any
+     * collapsed/expanded range and place the cursor after it. The src is
+     * escaped the same way as {@link Format.replaceImage} so spaces and `#`
+     * survive in the path.
+     */
+    private insertImageText(anchorBlock: Content, src: string): void {
+        const cursor = anchorBlock.getCursor();
+        if (!cursor)
+            return;
+
+        const { start, end } = cursor;
+        const { text: content } = anchorBlock;
+        const escapedSrc = src
+            .replace(/ /g, encodeURI(' '))
+            .replace(/#/g, encodeURIComponent('#'));
+        const imageText = `![](${escapedSrc})`;
+
+        anchorBlock.text
+            = content.substring(0, start.offset)
+                + imageText
+                + content.substring(end.offset);
+
+        const offset = start.offset + imageText.length;
+        anchorBlock.setCursor(offset, offset, true);
+    }
+
     copyAsMarkdown() {
         this.copyType = 'copyAsMarkdown';
         document.execCommand('copy');
@@ -748,6 +922,12 @@ class Clipboard {
 
     copyAsHtml() {
         this.copyType = 'copyAsHtml';
+        document.execCommand('copy');
+        this.copyType = 'normal';
+    }
+
+    copyAsRich() {
+        this.copyType = 'copyAsRich';
         document.execCommand('copy');
         this.copyType = 'normal';
     }

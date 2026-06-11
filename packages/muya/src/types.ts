@@ -18,6 +18,7 @@ export interface IMuyaOptions {
     frontmatterType: string; // '-' | '+' | ';' | '{';
     mermaidTheme: string;
     vegaTheme: string;
+    sequenceTheme: 'hand' | 'simple';
     hideQuickInsertHint: boolean;
     hideLinkPopup: boolean;
     autoCheck: boolean;
@@ -36,6 +37,59 @@ export interface IMuyaOptions {
     };
     json?: TState[];
     markdown?: string;
+    /**
+     * Resolve the OS clipboard to a local file path on paste.
+     *
+     * When the user pastes and the system clipboard holds a file (for
+     * example an image copied from a file manager rather than image bytes),
+     * the embedder resolves it to an absolute path. If this hook is provided
+     * and returns a non-empty path with an image extension, muya inserts that
+     * path as an inline image at the cursor instead of running the default
+     * text/HTML paste. Return `''` to fall through to the normal paste flow.
+     *
+     * Ported from the legacy `@muyajs` `clipboardFilePath` option.
+     */
+    clipboardFilePath?: () => Promise<string>;
+    /**
+     * Persist an image per the embedder's insert preference (copy into the
+     * document's assets folder, upload to an image host, or keep the path) and
+     * resolve to the src that should be written into the document.
+     *
+     * Invoked on paste — both when a clipboard FILE path is resolved (PG06)
+     * and when an in-memory bitmap is read from `clipboardData` (PG05) — by
+     * the image-edit toolbar, and by the drag-and-drop image handler (PG04),
+     * so a dropped local image file is persisted exactly like one inserted
+     * through the toolbar. `src` is an absolute local path (or a `data:` URL
+     * for a freshly pasted bitmap). Returning the original `src` keeps the
+     * path as-is; omitting the hook uses the raw `src` verbatim.
+     *
+     * Ported from the legacy `@muyajs` `imageAction` option.
+     */
+    imageAction?: (state: IImageActionState) => Promise<string>;
+    /**
+     * Resolve a dropped `File` to a local filesystem path.
+     *
+     * The DnD `DataTransfer` exposes a `File` object but not its on-disk
+     * path; only the embedder (e.g. Electron's `webUtils.getPathForFile`)
+     * can resolve it. Provide this hook to enable dropping a local image
+     * file into the document. Return `''` when no path is available.
+     *
+     * Ported from the legacy `@muyajs` direct `webUtils.getPathForFile` call.
+     */
+    getPathForFile?: (file: File) => string;
+}
+
+/**
+ * Image descriptor passed to {@link IMuyaOptions.imageAction}. Mirrors the
+ * `{ src, alt, title }` shape used by the image-edit toolbar.
+ */
+export interface IImageActionState {
+    /** Image source — an absolute local path or a `data:` URL for a bitmap. */
+    src: string;
+    /** Image alt text. */
+    alt: string;
+    /** Image title. */
+    title: string;
 }
 
 export type Nullable<T> = T | null | undefined | void;

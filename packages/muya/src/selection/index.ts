@@ -8,7 +8,11 @@ import type { Muya } from '../muya';
 import type { ICursor, INodeOffset, ISelection } from './types';
 import { BLOCK_DOM_PROPERTY, CLASS_NAMES } from '../config';
 import { isElement, isHTMLElement, isKeyboardEvent, isMouseEvent } from '../utils';
-import { getImageInfo } from '../utils/image';
+import { getImageInfo, getImageSrc } from '../utils/image';
+import {
+    buildSelectionAffiliation,
+    endpointBlockInfo,
+} from './affiliation';
 import {
     compareParagraphsOrder,
     findContentDOM,
@@ -37,7 +41,7 @@ class Selection {
         };
     }
 
-    static getCursorCoords() {
+    static getCursorCoords(preferEnd = false) {
         const sel = document.getSelection();
         let range;
         let rect = null;
@@ -54,8 +58,11 @@ class Selection {
                             : null;
                 }
 
+                // For a forward range selection the caret sits at the END, so
+                // prefer the last client rect; otherwise the first rect is the
+                // caret (collapsed cursor or backward selection).
                 if (rects?.length)
-                    rect = rects[0];
+                    rect = preferEnd ? rects[rects.length - 1] : rects[0];
             }
         }
 
@@ -305,6 +312,34 @@ class Selection {
             selectedImage,
         } = this;
 
+        // Backport of marktext's `selectionChange` payload extras the desktop
+        // relies on: `cursorCoords` for typewriter-mode scrolling and the
+        // active inline formats at the cursor for lighting up the toolbar.
+        // Follow the caret (focus end) for forward selections so typewriter
+        // scrolling tracks the cursor rather than the selection start.
+        const cursorCoords = Selection.getCursorCoords(direction === 'forward');
+        // Duck-type the Format block — a value import of Format here would
+        // create a selection -> format circular dependency.
+        const anchorBlockRef = this.anchorBlock as Format | null;
+        const formats
+            = isSelectionInSameBlock
+                && anchorBlockRef
+                && typeof anchorBlockRef.getFormatsInRange === 'function'
+                ? anchorBlockRef.getFormatsInRange().formats
+                : [];
+
+        // PARITY (gap PG1): re-derive the legacy `selectionChange` block-context
+        // the desktop Paragraph/Format menu state builder consumes —
+        // `affiliation` is the shared ancestor PARAGRAPH-type chain, and the
+        // per-endpoint `{ type, functionType }` describe the content leaves
+        // (`type: 'span'`, `functionType: 'codeContent' | 'cellContent' | …`).
+        const affiliation = buildSelectionAffiliation(
+            this.anchorBlock,
+            this.focusBlock,
+        );
+        const anchorBlockInfo = endpointBlockInfo(this.anchorBlock);
+        const focusBlockInfo = endpointBlockInfo(this.focusBlock);
+
         this.muya.eventCenter.emit('selection-change', {
             anchor,
             focus,
@@ -317,6 +352,11 @@ class Selection {
             direction,
             type,
             selectedImage,
+            cursorCoords,
+            formats,
+            affiliation,
+            anchorBlockInfo,
+            focusBlockInfo,
         });
     }
 
@@ -488,25 +528,6 @@ class Selection {
                 return this._handleClickInlineImage(event, imageWrapper);
         };
 
-        const handleKeydown = (event: Event) => {
-            if (!isKeyboardEvent(event))
-                return;
-
-            const { key } = event;
-            const { selectedImage } = this;
-            // marktext ed1b3354 (#2816): `Delete` was missing from the
-            // image-selected key set, so it fell through to native
-            // contenteditable handling and removed the text *after* the
-            // image. Match key exactly to avoid substring-collisions
-            // like `BackspaceX`.
-            if (selectedImage && /^(?:Backspace|Delete|Enter)$/.test(key)) {
-                event.preventDefault();
-                const { block, ...imageInfo } = selectedImage;
-                block.deleteImage(imageInfo);
-                this.selectedImage = null;
-            }
-        };
-
         eventCenter.attachDOMEvent(domNode, 'mousedown', handleMousedown);
         eventCenter.attachDOMEvent(domNode, 'mousemove', handleMousemoveOrClick);
         eventCenter.attachDOMEvent(domNode, 'mouseup', handleMouseupOrLeave);
@@ -514,7 +535,70 @@ class Selection {
         eventCenter.attachDOMEvent(domNode, 'click', handleMousemoveOrClick);
         eventCenter.attachDOMEvent(domNode, 'click', handleClick);
         eventCenter.attachDOMEvent(document, 'click', docHandlerClick);
-        eventCenter.attachDOMEvent(document, 'keydown', handleKeydown);
+        eventCenter.attachDOMEvent(document, 'keydown', this._handleImageKeydown);
+    }
+
+    // Keydown handling while an image is selected. Bound as a field so it can
+    // be passed directly to `attachDOMEvent` and keeps `_listenSelectActions`
+    // small. No-op unless an image is currently selected.
+    private _handleImageKeydown = (event: Event) => {
+        if (!isKeyboardEvent(event))
+            return;
+
+        const { key } = event;
+        const { selectedImage } = this;
+        // `selectedImage` is the gate: it is only ever set by an in-editor
+        // image click (`_handleClickInlineImage`) and is cleared on ANY
+        // document click (`docHandlerClick`) and on every delete/preview here.
+        // So this handler is inert unless the user has an image actively
+        // selected inside this editor — matching the legacy muyajs behavior.
+        if (!selectedImage)
+            return;
+
+        // marktext (#2816 era): pressing Space with an image selected asks the
+        // host to open the full-screen preview. Mirror the legacy `keyboard.js`
+        // emit (`preview-image` { data: src }) and resolve the src the same way
+        // the Cmd/Ctrl-click path does, so relative / file paths become
+        // loadable URLs. `preventDefault` stops the native space from being
+        // inserted next to the selected image.
+        if (key === ' ') {
+            event.preventDefault();
+            this._previewSelectedImage(selectedImage);
+            return;
+        }
+
+        // marktext ed1b3354 (#2816): `Delete` was missing from the
+        // image-selected key set, so it fell through to native contenteditable
+        // handling and removed the text *after* the image. Match key exactly
+        // to avoid substring-collisions like `BackspaceX`.
+        if (/^(?:Backspace|Delete|Enter)$/.test(key)) {
+            event.preventDefault();
+            const { block, ...imageInfo } = selectedImage;
+            block.deleteImage(imageInfo);
+            this.selectedImage = null;
+        }
+    };
+
+    // Resolve the selected image's src and ask the host to full-screen
+    // preview it. Mirrors the legacy `preview-image` { data: src } payload so
+    // the desktop renderer's existing subscription opens `SimpleImageViewer`.
+    // Resolution matches the Cmd/Ctrl-click path: prefer the token src
+    // (run through `getImageSrc` so relative / file paths become loadable),
+    // and fall back to the rendered <img>'s own `src` attribute.
+    private _previewSelectedImage(selectedImage: NonNullable<Selection['selectedImage']>) {
+        const { token, imageId } = selectedImage;
+        const tokenSrc = token.src || token.attrs.src || '';
+        const imgSrc
+            = this.muya.domNode
+                .querySelector<HTMLImageElement>(`#${imageId} img`)
+                ?.getAttribute('src') ?? '';
+        const src = getImageSrc(tokenSrc).src || imgSrc;
+
+        if (src) {
+            this.muya.eventCenter.emit('preview-image', {
+                data: src,
+            });
+        }
     }
 
     // Handle click inline image.
@@ -544,6 +628,28 @@ class Selection {
 
         // Handle image click, to select the current image
         if (isHTMLElement(target) && target.tagName === 'IMG') {
+            // Cmd/Ctrl-click an image → ask the host to preview it. marktext's
+            // `clickEvent.js` dispatched `format-click` with `{ event,
+            // formatType: 'image', data: <src> }`; the desktop renderer
+            // (`editor.vue` `format-click` handler) gates on the modifier and
+            // opens a `SimpleImageViewer` with that src string. We resolve the
+            // src from the token (the same source path the renderer used)
+            // through `getImageSrc` so relative/file paths become loadable
+            // URLs, falling back to the rendered <img>'s own `src` attribute.
+            // The plain-click select/toolbar/transformer path below is left
+            // untouched.
+            if (event instanceof MouseEvent && (event.metaKey || event.ctrlKey)) {
+                const tokenSrc = imageInfo.token.src || imageInfo.token.attrs.src || '';
+                const src = getImageSrc(tokenSrc).src || target.getAttribute('src') || '';
+                if (src) {
+                    eventCenter.emit('format-click', {
+                        event,
+                        formatType: 'image',
+                        data: src,
+                    });
+                }
+            }
+
             // Handle show image toolbar
             const rect = imageWrapper
                 .querySelector(`.${CLASS_NAMES.MU_IMAGE_CONTAINER}`)

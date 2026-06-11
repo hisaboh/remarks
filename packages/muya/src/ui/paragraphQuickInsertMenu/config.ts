@@ -1,8 +1,10 @@
 import type Parent from '../../block/base/parent';
 import type { Muya } from '../../index';
+import type { IFrontmatterMeta } from '../../state/types';
 import bulletListIcon from '../../assets/icons/bullet_list/2.png';
 import vegaIcon from '../../assets/icons/chart/2.png';
 import codeIcon from '../../assets/icons/code/2.png';
+import flowchartIcon from '../../assets/icons/flowchart/2.png';
 import frontMatterIcon from '../../assets/icons/front_matter/2.png';
 import header1Icon from '../../assets/icons/heading_1/2.png';
 import header2Icon from '../../assets/icons/heading_2/2.png';
@@ -19,17 +21,66 @@ import orderListIcon from '../../assets/icons/order_list/2.png';
 import paragraphIcon from '../../assets/icons/paragraph/2.png';
 import plantumlIcon from '../../assets/icons/plantuml/2.png';
 import quoteIcon from '../../assets/icons/quote_block/2.png';
+import sequenceIcon from '../../assets/icons/sequence/2.png';
 
 import todoListIcon from '../../assets/icons/todolist/2.png';
 import { ScrollPage } from '../../block/scrollPage';
 import { isOsx } from '../../config';
 
 import emptyStates from '../../config/emptyStates';
+import { getCursorReference } from '../../selection';
 import { isParagraphState } from '../../state/types';
 import { deepClone, isKeyboardEvent } from '../../utils';
 import logger from '../../utils/logger';
 
 const debug = logger('quickInsert:');
+
+/**
+ * Derive the frontmatter `lang`/`style` from the user's `frontmatterType`
+ * preference, mirroring legacy muyajs `handleFrontMatter`
+ * (contentState/paragraphCtrl.js): `-` -> yaml `---`, `+` -> toml `+++`,
+ * `;`/`{` -> json (`;;;`/`{}`). The serializer (`serializeFrontMatter`)
+ * switches on `lang`, so getting `lang` right is what makes YAML/TOML emit
+ * their fences instead of falling through to JSON braces.
+ */
+export function frontmatterMeta(frontmatterType: string): IFrontmatterMeta {
+    switch (frontmatterType) {
+        case '+':
+            return { lang: 'toml', style: '+' };
+        case ';':
+            return { lang: 'json', style: ';' };
+        case '{':
+            return { lang: 'json', style: '{' };
+        case '-':
+        default:
+            return { lang: 'yaml', style: '-' };
+    }
+}
+
+/**
+ * Prepend a front matter block at the very start of the document, mirroring
+ * legacy muyajs `handleFrontMatter`. Front matter is only valid as the first
+ * block, so this never replaces the block at the cursor. Idempotent: a no-op
+ * when the document already starts with front matter, so it never duplicates
+ * the block. Shared by `Muya.updateParagraph('front-matter')` and the
+ * quick-insert menu's `frontmatter` entry so both follow identical semantics.
+ */
+export function insertFrontMatterAtStart(muya: Muya) {
+    const { scrollPage } = muya.editor;
+    if (!scrollPage)
+        return;
+
+    const firstBlock = scrollPage.firstChild as Parent | null;
+    if (firstBlock?.blockName === 'frontmatter')
+        return;
+
+    const fmState = deepClone(emptyStates.frontmatter);
+    Object.assign(fmState.meta, frontmatterMeta(muya.options.frontmatterType));
+
+    const frontmatter = ScrollPage.loadBlock('frontmatter').create(muya, fmState);
+    scrollPage.insertBefore(frontmatter, firstBlock);
+    frontmatter.firstContentInDescendant()?.setCursor(0, 0, true);
+}
 
 const COMMAND_KEY = isOsx ? '⌘' : 'Ctrl';
 const OPTION_KEY = isOsx ? '⌥' : 'Alt';
@@ -326,6 +377,18 @@ export const MENU_CONFIG: IQuickInsertMenuItem[] = [
                 label: 'diagram plantuml',
                 icon: plantumlIcon,
             },
+            {
+                title: 'Flowchart',
+                subTitle: 'By flowchart.js',
+                label: 'diagram flowchart',
+                icon: flowchartIcon,
+            },
+            {
+                title: 'Sequence',
+                subTitle: 'By js-sequence-diagrams',
+                label: 'diagram sequence',
+                icon: sequenceIcon,
+            },
         ],
     },
 ];
@@ -354,6 +417,32 @@ export function getLabelFromEvent(event: Event) {
         return result.label;
 }
 
+/**
+ * Show the in-editor table grid picker, porting legacy muyajs
+ * `paragraphCtrl.showTablePicker`. The in-editor "table" insert (the `/`
+ * quick-insert menu and the paragraph front-menu) must offer a hover-grid
+ * dimension picker rather than dropping a fixed-size table — the picker UI
+ * (`TableChessboard`) subscribes to `muya-table-picker` and invokes the
+ * dispatched callback with the zero-based `(row, column)` the user picked, so
+ * the table is created at `row + 1 × column + 1` to match legacy semantics.
+ *
+ * The float anchors to the caret (`getCursorReference`); when the cursor has
+ * no coords (e.g. the front-menu took focus) it falls back to the block's DOM
+ * node. No-op if neither is available.
+ */
+export function showTablePicker(muya: Muya, block: Parent) {
+    const { eventCenter } = muya;
+    const reference = getCursorReference() ?? block.domNode;
+    if (!reference)
+        return;
+
+    const handler = (row: number, column: number) => {
+        muya.createTable({ rows: row + 1, columns: column + 1 });
+    };
+
+    eventCenter.emit('muya-table-picker', { row: -1, column: -1 }, reference, handler);
+}
+
 export function replaceBlockByLabel({ block, muya, label, text = '' }: {
     block: Parent;
     muya: Muya;
@@ -364,18 +453,35 @@ export function replaceBlockByLabel({ block, muya, label, text = '' }: {
         preferLooseListItem,
         bulletListMarker,
         orderListDelimiter,
-        frontmatterType,
     } = muya.options;
     let newBlock = null;
     let state = null;
     let cursorBlock = null;
 
+    // Front matter is only valid as the document's first block, so the
+    // quick-insert "Front Matter" entry must NOT replace the cursor block in
+    // place (which destroyed its content and produced invalid mid-document
+    // front matter). Prepend at document start and bail before the in-place
+    // `block.replaceWith` below — sharing the idempotent doc-start logic with
+    // `Muya.updateParagraph('front-matter')`.
+    if (label === 'frontmatter') {
+        insertFrontMatterAtStart(muya);
+        return;
+    }
+
+    // The in-editor "table" insert shows a hover-grid dimension picker
+    // (legacy muyajs `showTablePicker`) instead of dropping a fixed-size
+    // table. The picker's callback creates the table at the chosen size, so
+    // bail before the in-place empty-table replacement below.
+    if (label === 'table') {
+        showTablePicker(muya, block);
+        return;
+    }
+
     switch (label) {
         case 'paragraph':
             // fall through
         case 'thematic-break':
-            // fall through
-        case 'table':
             // fall through
         case 'math-block':
             // fall through
@@ -394,15 +500,6 @@ export function replaceBlockByLabel({ block, muya, label, text = '' }: {
                     inner.text = text;
             }
             state = cloned;
-            newBlock = ScrollPage.loadBlock(label).create(muya, state);
-            break;
-        }
-
-        case 'frontmatter': {
-            const fmState = deepClone(emptyStates.frontmatter);
-            fmState.meta.style = frontmatterType;
-            fmState.meta.lang = /\+-/.test(frontmatterType) ? 'yaml' : 'json';
-            state = fmState;
             newBlock = ScrollPage.loadBlock(label).create(muya, state);
             break;
         }
@@ -460,11 +557,21 @@ export function replaceBlockByLabel({ block, muya, label, text = '' }: {
             // fall through
         case 'diagram mermaid':
             // fall through
-        case 'diagram plantuml': {
+        case 'diagram plantuml':
+            // fall through
+        case 'diagram flowchart':
+            // fall through
+        case 'diagram sequence': {
             const diagramState = deepClone(emptyStates.diagram);
 
             const [name, type] = label.split(' ');
-            if (type === 'mermaid' || type === 'plantuml' || type === 'vega-lite') {
+            if (
+                type === 'mermaid'
+                || type === 'plantuml'
+                || type === 'vega-lite'
+                || type === 'flowchart'
+                || type === 'sequence'
+            ) {
                 diagramState.meta.type = type;
                 diagramState.meta.lang = type === 'vega-lite' ? 'json' : 'yaml';
             }

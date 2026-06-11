@@ -2,7 +2,7 @@ import type { JSONOp, JSONOpComponent, JSONOpList } from 'ot-json1';
 import type Content from '../block/base/content';
 import type Format from '../block/base/format';
 import type { Muya } from '../muya';
-import type { ISelection } from '../selection/types';
+import type { IHistorySelection } from '../selection/types';
 import type { TState } from '../state/types';
 import type { Nullable } from '../types';
 import * as otText from 'ot-text-unicode';
@@ -19,7 +19,9 @@ import JSONState from '../state';
 import { hasPick, isHTMLElement } from '../utils';
 import { getBlock } from '../utils/dom';
 import logger from '../utils/logger';
+import { attachDragDropImageHandlers } from './dragDropImage';
 import { attachLinkMouseHandlers } from './linkMouseEvents';
+import TableCellSelection from './tableCellSelection';
 
 const debug = logger('editor:');
 
@@ -30,6 +32,7 @@ export class Editor {
     searchModule: Search;
     clipboard: Clipboard;
     history: History;
+    tableSelection: TableCellSelection;
     scrollPage: Nullable<ScrollPage> = null;
 
     private _activeContentBlock: Nullable<Content> = null;
@@ -43,6 +46,7 @@ export class Editor {
         this.searchModule = new Search(muya);
         this.clipboard = Clipboard.create(muya);
         this.history = new History(muya);
+        this.tableSelection = TableCellSelection.create(muya);
     }
 
     get activeContentBlock() {
@@ -74,6 +78,10 @@ export class Editor {
         // dispatches `muya-link-tools` so the staged popover lights up.
         // Cleanup is handled by `muya.destroy()` → `detachAllDomEvents`.
         attachLinkMouseHandlers(muya);
+        // marktext PG4 (#4406 follow-up): dropping an image file or web-link
+        // image into the editor inserts it as a new `![](src)` block. Cleanup
+        // is likewise handled by `detachAllDomEvents`.
+        attachDragDropImageHandlers(muya);
         this.focus();
     }
 
@@ -162,7 +170,7 @@ export class Editor {
         firstLeafBlock.setCursor(0, 0, needUpdated);
     }
 
-    updateContents(operations: JSONOp, selection: Nullable<ISelection>, source: string) {
+    updateContents(operations: JSONOp, selection: Nullable<IHistorySelection>, source: string) {
         const { muya } = this;
         // ot-json1 no-op (`null`) is forwarded to dispatch — JSONState
         // short-circuits internally so listeners still see a json-change
@@ -356,18 +364,70 @@ export class Editor {
 
         drop(snapshot, operations);
 
-        if (selection) {
-            const { anchorPath, anchor, focus, isSelectionInSameBlock } = selection;
-            const cursorBlock = this.scrollPage?.queryBlock(anchorPath);
+        this._restoreSelection(selection);
+    }
 
-            const begin = Math.min(anchor.offset, focus.offset);
-            const end = Math.max(anchor.offset, focus.offset);
+    private _restoreSelection(selection: Nullable<IHistorySelection>, treeRebuilt = false) {
+        if (!selection)
+            return;
 
-            if (isSelectionInSameBlock && cursorBlock && cursorBlock.isContent())
+        const { anchorPath, anchor, focus, isSelectionInSameBlock } = selection;
+        // `ScrollPage.queryBlock` consumes the path array in place (`path.shift`),
+        // so query against a copy and leave the caller's selection untouched.
+        const cursorBlock = this.scrollPage?.queryBlock([...anchorPath]);
+
+        const begin = Math.min(anchor.offset, focus.offset);
+        const end = Math.max(anchor.offset, focus.offset);
+
+        if (isSelectionInSameBlock && cursorBlock && cursorBlock.isContent()) {
+            cursorBlock.setCursor(begin, end, true);
+            return;
+        }
+
+        // When the tree was rebuilt wholesale (rebuildContents), the saved
+        // selection's cached `anchorBlock` / `focusBlock` reference DETACHED
+        // nodes from the previous tree — resolving them would set the native DOM
+        // range onto a detached node and crash the next `getSelection()` read.
+        // Re-resolve the caret from the (cloned) path against the fresh tree;
+        // fall back to focusing the first content block when the saved path no
+        // longer points at a content leaf (e.g. a paragraph became a table).
+        if (treeRebuilt) {
+            if (cursorBlock && cursorBlock.isContent())
                 cursorBlock.setCursor(begin, end, true);
             else
-                this.selection.setSelection(selection);
+                this.focus();
+
+            return;
         }
+
+        // Incremental (updateContents) path: blocks are still attached. Clone the
+        // paths so `_setCursor`'s `queryBlock(path)` fallback can't drain the
+        // caller's arrays — notably the selection object stored in the undo stack.
+        this.selection.setSelection({
+            ...selection,
+            anchorPath: [...selection.anchorPath],
+            focusPath: [...selection.focusPath],
+        });
+    }
+
+    /**
+     * Apply a history op by rebuilding the live block tree wholesale instead of
+     * walking it incrementally (`updateContents`). The op is dispatched to the
+     * authoritative json state, then `ScrollPage.updateState` re-creates the DOM
+     * from that state — the same safe path `setContent` uses. Used for undo/redo
+     * of whole-document boundaries (e.g. exiting source-code mode) whose op
+     * shapes the incremental pick/drop walker cannot apply without desyncing the
+     * DOM from the json state.
+     */
+    rebuildContents(operations: JSONOp, selection: Nullable<IHistorySelection>, source: string) {
+        this.jsonState.dispatch(operations, source);
+
+        const state = this.jsonState.getState();
+        this.scrollPage!.updateState(state);
+
+        // The tree was rebuilt wholesale, so the selection's cached block
+        // references are stale — resolve the caret from paths instead.
+        this._restoreSelection(selection, true);
     }
 
     setContent(content: TState[] | string, autoFocus = false) {

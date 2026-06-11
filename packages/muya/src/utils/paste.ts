@@ -1,4 +1,4 @@
-import { PARAGRAPH_TYPES, PREVIEW_DOMPURIFY_CONFIG } from '../config';
+import { IMAGE_EXT_REG, PARAGRAPH_TYPES, PREVIEW_DOMPURIFY_CONFIG } from '../config';
 import { sanitize } from '../utils';
 
 const TIMEOUT = 1500;
@@ -124,6 +124,121 @@ export function isStandaloneTableHtml(text: string) {
     if (!text)
         return false;
     return STANDALONE_TABLE_REG.test(text.trim());
+}
+
+/**
+ * Resolve the `clipboardFilePath` paste hook to a usable inline-image path.
+ *
+ * Returns the resolved path only when the hook yields a non-empty string that
+ * looks like an image file (its extension matches {@link IMAGE_EXT_REG});
+ * otherwise returns `''` so the caller falls through to the normal text/HTML
+ * paste. Ported from the legacy `@muyajs` `pasteImage` guard, which inserted
+ * the resolved path as an image when it matched the same extension regex.
+ *
+ * @param hook the `options.clipboardFilePath` callback, if configured
+ */
+export async function resolveClipboardImagePath(
+    hook: (() => Promise<string>) | undefined,
+): Promise<string> {
+    if (typeof hook !== 'function')
+        return '';
+
+    const path = await hook();
+
+    if (typeof path === 'string' && path && IMAGE_EXT_REG.test(path))
+        return path;
+
+    return '';
+}
+
+/**
+ * Extract an in-memory image `File` from a paste `DataTransfer`.
+ *
+ * Covers the bitmap clipboard case (PG05): screenshots and browser
+ * "Copy Image" put image bytes — not a file path — on the clipboard. We
+ * prefer `clipboardData.files` and fall back to scanning `clipboardData.items`
+ * for the first `image/*` entry. Returns `null` when no image is present.
+ *
+ * Ported from the legacy `@muyajs` `pasteImage` `items[i].getAsFile()` snapshot.
+ */
+export function getClipboardImageFile(
+    clipboardData: DataTransfer | null,
+): File | null {
+    if (!clipboardData)
+        return null;
+
+    const { files, items } = clipboardData;
+
+    if (files && files.length > 0) {
+        for (const file of Array.from(files)) {
+            if (file.type.startsWith('image/'))
+                return file;
+        }
+    }
+
+    if (items) {
+        for (const item of Array.from(items)) {
+            if (item.kind === 'file' && item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file)
+                    return file;
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Read a `File`/`Blob` as a base64 `data:` URL.
+ *
+ * Used to turn a pasted bitmap (PG05) into a `data:` URL that the embedder's
+ * `imageAction` can persist. Prefers the native {@link FileReader}
+ * (`readAsDataURL`), matching the legacy `@muyajs` path and covering the
+ * `chrome70` build target where `Blob.arrayBuffer()` is unavailable; falls
+ * back to `Blob.arrayBuffer()` + `btoa` where `FileReader` is absent (e.g. the
+ * Node test environment). Resolves to `''` on read error.
+ */
+export function readFileAsDataURL(file: File): Promise<string> {
+    if (typeof FileReader !== 'undefined') {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.addEventListener('load', () => {
+                resolve(typeof reader.result === 'string' ? reader.result : '');
+            });
+            reader.addEventListener('error', () => resolve(''));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    // Fallback for environments without `FileReader` (e.g. Node tests). Guard
+    // the dependencies so a missing API resolves to '' rather than throwing
+    // out of the `Promise<string>` contract.
+    if (typeof file.arrayBuffer !== 'function' || typeof btoa !== 'function')
+        return Promise.resolve('');
+
+    return file
+        .arrayBuffer()
+        .then(bufferToDataURL(file.type))
+        .catch(() => '');
+}
+
+/**
+ * Base64-encode an `ArrayBuffer` into a `data:` URL of the given MIME type.
+ * Processes the bytes in chunks so a large blob doesn't build one huge
+ * intermediate string via per-byte concatenation.
+ */
+function bufferToDataURL(mimeType: string) {
+    return (buffer: ArrayBuffer): string => {
+        const bytes = new Uint8Array(buffer);
+        const CHUNK = 0x8000;
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+            const chunk = bytes.subarray(i, i + CHUNK);
+            binary += String.fromCharCode(...chunk);
+        }
+        return `data:${mimeType};base64,${btoa(binary)}`;
+    };
 }
 
 /**
