@@ -15,8 +15,9 @@ import History from '../history';
 import InlineRenderer from '../inlineRenderer';
 import { Search } from '../search';
 import Selection from '../selection';
+import { getNodeAndOffset } from '../selection/dom';
 import JSONState from '../state';
-import { hasPick, isHTMLElement } from '../utils';
+import { hasPick, isHTMLElement, isKeyboardEvent } from '../utils';
 import { getBlock } from '../utils/dom';
 import logger from '../utils/logger';
 import { attachDragDropImageHandlers } from './dragDropImage';
@@ -85,10 +86,83 @@ export class Editor {
         this.focus();
     }
 
+    /**
+     * Extend a Shift+ArrowUp/Down selection across block boundaries. WebKit
+     * cannot move the selection focus vertically out of a block wrapper —
+     * Shift+Down on a block's last visual line clamps to the line end instead
+     * of reaching the next block, so the line terminator never makes it into
+     * a selection (and copies of "a whole line" lose their newline). When the
+     * focus edge sits on the boundary line, move it into the neighbor block
+     * ourselves. Returns true when the event was handled.
+     */
+    private _extendSelectionAcrossBlocks(event: Event): boolean {
+        if (!isKeyboardEvent(event) || !event.shiftKey)
+            return false;
+
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')
+            return false;
+
+        const domSelection = document.getSelection();
+        if (!domSelection || domSelection.rangeCount === 0)
+            return false;
+
+        const selection = this.selection.getSelection();
+        if (!selection)
+            return false;
+
+        const { direction, focusBlock, focus } = selection;
+        if (!focusBlock || focusBlock.domNode == null)
+            return false;
+
+        const isDown = event.key === 'ArrowDown';
+        // Measure the FOCUS edge of the selection (the moving edge): for a
+        // forward selection that is the range end, otherwise the range start.
+        const coords = Selection.getCursorCoords(direction === 'forward');
+        if (!coords)
+            return false;
+
+        const { height, top } = focusBlock.domNode.getBoundingClientRect();
+        const lineHeight = Number.parseFloat(
+            getComputedStyle(focusBlock.domNode).lineHeight,
+        );
+        const topOffset = Math.floor((coords.y - top) / lineHeight);
+        const bottomOffset = Math.round(
+            (top + height - lineHeight - coords.y) / lineHeight,
+        );
+
+        // Not on the boundary line — the native selection handles it.
+        if (isDown ? bottomOffset > 0 : topOffset > 0)
+            return false;
+
+        const targetBlock = isDown
+            ? focusBlock.nextContentInContext()
+            : focusBlock.previousContentInContext();
+        if (!targetBlock || targetBlock.domNode == null)
+            return false;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        // Same-column approximation: exact when the boundary lines are not
+        // soft-wrapped (the common case); wrapped lines clamp to the block
+        // edge, which still beats not crossing the boundary at all.
+        const targetOffset = Math.min(focus.offset, targetBlock.text.length);
+        const { node, offset } = getNodeAndOffset(
+            targetBlock.domNode,
+            targetOffset,
+        );
+        domSelection.extend(node, offset);
+
+        return true;
+    }
+
     private _dispatchEvents() {
         const { domNode } = this.muya;
 
         const eventHandler = (event: Event) => {
+            if (event.type === 'keydown' && this._extendSelectionAcrossBlocks(event))
+                return;
+
             const { anchorBlock, isSelectionInSameBlock }
                 = this.selection.getSelection() ?? {};
             // Fix issue that language input can not get focus when it's empty(Firefox only)

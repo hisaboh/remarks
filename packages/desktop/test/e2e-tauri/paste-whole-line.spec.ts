@@ -58,6 +58,27 @@ test('copying a line incl. its newline keeps the trailing \\n on the clipboard',
   expect(copied.text).toBe('alpha\n')
 })
 
+test('Shift+Down from the line start selects through the line break', async({ page }) => {
+  await setupTwoLines(page)
+
+  // Caret to the start of "alpha", then extend down. WKWebView's native
+  // selection clamps this at the line end (user-reported; Playwright's
+  // newer WebKit happens to cross on its own) — the editor extends the
+  // focus into the next block itself so the behavior is deterministic and
+  // the selection includes the line terminator on both engines.
+  await page.locator(PARAGRAPH_CONTENT, { hasText: 'alpha' }).click()
+  await page.keyboard.press('Meta+ArrowLeft')
+  await page.keyboard.press('Shift+ArrowDown')
+
+  const copied = await page.evaluate((selector: string) => {
+    const dt = new DataTransfer()
+    const ev = new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true })
+    document.querySelector(selector)!.dispatchEvent(ev)
+    return { text: dt.getData('text/plain') }
+  }, PARAGRAPH_CONTENT)
+  expect(copied.text).toBe('alpha\n')
+})
+
 test('pasting "alpha\\n" at the start of a line inserts a line instead of merging', async({
   page
 }) => {
