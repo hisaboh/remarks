@@ -743,8 +743,13 @@ class Clipboard {
             // editor semantics. An empty paragraph also qualifies: it survives
             // below the pasted lines, preserving the line break. The caret
             // stays at the start of the pushed-down block.
+            //
+            // The signal is read from text/plain (`text`), NOT from `markdown`:
+            // muya's own copies carry a text/html flavor too, and the
+            // HTML→Markdown conversion drops the trailing newline that
+            // text/plain faithfully keeps.
             if (
-                /\n$/.test(markdown)
+                /\n$/.test(text)
                 && start.offset === 0
                 && end.offset === 0
                 && /^(?:paragraph\.content|atxheading\.content|setextheading\.content)$/.test(

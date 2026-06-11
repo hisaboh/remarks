@@ -34,9 +34,14 @@ const caretToStartOfBeta = async(page: Page): Promise<void> => {
   await page.keyboard.press('Meta+ArrowLeft')
 }
 
-const pasteText = (args: { selector: string; text: string }): Promise<(string | null)[]> => {
+const pasteText = (args: {
+  selector: string
+  text: string
+  html?: string
+}): Promise<(string | null)[]> => {
   const dt = new DataTransfer()
   dt.setData('text/plain', args.text)
+  if (args.html) dt.setData('text/html', args.html)
   const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
   const paragraphs = document.querySelectorAll(args.selector)
   paragraphs[paragraphs.length - 1].dispatchEvent(ev)
@@ -140,9 +145,39 @@ test('muya→muya round trip: copy line incl. newline, paste at another line sta
 
   const copied = await page.evaluate(copyLineWithNewline, PARAGRAPH_CONTENT)
   await caretToStartOfBeta(page)
+  // Carry BOTH clipboard flavors, exactly as a real muya copy does — the
+  // text/html flavor must not defeat the whole-line (trailing \n) signal
+  // that only text/plain keeps.
   const paragraphs = await page.evaluate(pasteText, {
     selector: PARAGRAPH_CONTENT,
-    text: copied.text
+    text: copied.text,
+    html: copied.html
+  })
+  expect(paragraphs).toEqual(['alpha', 'alpha', 'beta'])
+})
+
+test('keyboard round trip: select line via Shift+Down, copy, paste at another line head', async({
+  page
+}) => {
+  await setupTwoLines(page)
+
+  // The exact user flow: line start → Shift+Down → copy (both flavors) →
+  // paste at the head of another line → the line is inserted above it.
+  await page.locator(PARAGRAPH_CONTENT, { hasText: 'alpha' }).click()
+  await page.keyboard.press('Meta+ArrowLeft')
+  await page.keyboard.press('Shift+ArrowDown')
+  const copied = await page.evaluate((selector: string) => {
+    const dt = new DataTransfer()
+    const ev = new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true })
+    document.querySelector(selector)!.dispatchEvent(ev)
+    return { text: dt.getData('text/plain'), html: dt.getData('text/html') }
+  }, PARAGRAPH_CONTENT)
+
+  await caretToStartOfBeta(page)
+  const paragraphs = await page.evaluate(pasteText, {
+    selector: PARAGRAPH_CONTENT,
+    text: copied.text,
+    html: copied.html
   })
   expect(paragraphs).toEqual(['alpha', 'alpha', 'beta'])
 })
