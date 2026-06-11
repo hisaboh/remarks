@@ -112,6 +112,8 @@ const SEND_MAP: Record<string, CmdSpec> = {
   },
   'mt::update-sidebar-menu': { command: 'menu_update_sidebar', params: ['_wid', 'visible'] },
   'mt::view-layout-changed': { command: 'menu_update_view', params: ['_wid', 'changes'] },
+  'mt::editor-selection-changed': { command: 'menu_update_paragraph', params: ['_wid', 'state'] },
+  'mt::window-toggle-always-on-top': { command: 'window_toggle_always_on_top' },
   // Open a folder as the sidebar project (sidebar button + command/menu).
   'mt::ask-for-open-project-in-sidebar': { command: 'project_open' },
   'mt::cmd-open-folder': { command: 'project_open' },

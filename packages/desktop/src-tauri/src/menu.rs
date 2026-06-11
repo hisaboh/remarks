@@ -36,6 +36,94 @@ const TABBAR_ID: &str = "view.toggle-tabbar";
 const SOURCE_CODE_ID: &str = "view.source-code-mode";
 const TYPEWRITER_ID: &str = "view.typewriter-mode";
 const FOCUS_ID: &str = "view.focus-mode";
+const AUTOSAVE_ID: &str = "file.toggle-auto-save";
+const ALWAYS_ON_TOP_ID: &str = "window.toggle-always-on-top";
+
+// Theme menu items carry a `theme:` prefix (theme names are not renderer
+// command ids); handle_menu_event writes the preference directly.
+const THEME_PREFIX: &str = "theme:";
+const THEME_FOLLOW_SYSTEM_ID: &str = "theme:follow-system";
+
+// Help menu items open external URLs (`help:` prefix → URL table).
+const HELP_PREFIX: &str = "help:";
+const HELP_LINKS: &[(&str, &str, &str)] = &[
+    ("help:markdown", "menu.help.markdownReference", "https://marktext.me/docs/markdown-syntax"),
+    ("help:changelog", "menu.help.changelog", "https://github.com/marktext/marktext/releases"),
+    ("help:follow-us", "menu.help.followUs", "https://twitter.com/marktextapp"),
+    ("help:support", "menu.help.support", "https://github.com/sponsors/marktext"),
+    (
+        "help:ask-question",
+        "menu.help.askQuestion",
+        "https://github.com/marktext/marktext/discussions",
+    ),
+    ("help:report-bug", "menu.help.reportBug", "https://github.com/marktext/marktext/issues"),
+    ("help:view-source", "menu.help.viewSource", "https://github.com/marktext/marktext"),
+    (
+        "help:license",
+        "menu.help.license",
+        "https://github.com/marktext/marktext/blob/develop/LICENSE",
+    ),
+];
+
+// Theme id → locale key, in the Electron menu's light/dark grouping.
+const LIGHT_THEMES: &[(&str, &str)] = &[
+    ("ayu-light", "menu.theme.ayuLight"),
+    ("light", "menu.theme.cadmiumLight"),
+    ("catppuccin-latte", "menu.theme.catppuccinLatte"),
+    ("everforest-light", "menu.theme.everforestLight"),
+    ("graphite", "menu.theme.graphiteLight"),
+    ("gruvbox-light", "menu.theme.gruvboxLight"),
+    ("rose-pine-dawn", "menu.theme.rosePineDawn"),
+    ("solarized-light", "menu.theme.solarizedLight"),
+    ("tokyo-night-light", "menu.theme.tokyoNightLight"),
+    ("ulysses", "menu.theme.ulyssesLight"),
+];
+const DARK_THEMES: &[(&str, &str)] = &[
+    ("ayu-dark", "menu.theme.ayuDark"),
+    ("ayu-mirage", "menu.theme.ayuMirage"),
+    ("dark", "menu.theme.cadmiumDark"),
+    ("catppuccin-mocha", "menu.theme.catppuccinMocha"),
+    ("cyberdream", "menu.theme.cyberdream"),
+    ("dracula", "menu.theme.dracula"),
+    ("everforest-dark", "menu.theme.everforestDark"),
+    ("gruvbox-dark", "menu.theme.gruvboxDark"),
+    ("horizon-dark", "menu.theme.horizonDark"),
+    ("kanagawa", "menu.theme.kanagawa"),
+    ("material-dark", "menu.theme.materialDark"),
+    ("monokai-pro", "menu.theme.monokaiPro"),
+    ("nightfox", "menu.theme.nightfox"),
+    ("nord", "menu.theme.nord"),
+    ("one-dark", "menu.theme.oneDark"),
+    ("oxocarbon-dark", "menu.theme.oxocarbonDark"),
+    ("palenight", "menu.theme.palenight"),
+    ("rose-pine", "menu.theme.rosePine"),
+    ("rose-pine-moon", "menu.theme.rosePineMoon"),
+    ("solarized-dark", "menu.theme.solarizedDark"),
+    ("synthwave-84", "menu.theme.synthwave84"),
+    ("tokyo-night", "menu.theme.tokyoNight"),
+    ("tokyo-night-storm", "menu.theme.tokyoNightStorm"),
+];
+
+/// Paragraph affiliation tag → menu item id. Mirrors MENU_ID_MAP in
+/// main/menu/actions/paragraph.ts.
+const PARAGRAPH_MAP: &[(&str, &str)] = &[
+    ("paragraph.heading-1", "h1"),
+    ("paragraph.heading-2", "h2"),
+    ("paragraph.heading-3", "h3"),
+    ("paragraph.heading-4", "h4"),
+    ("paragraph.heading-5", "h5"),
+    ("paragraph.heading-6", "h6"),
+    ("paragraph.table", "figure"),
+    ("paragraph.code-fence", "pre"),
+    ("paragraph.html-block", "html"),
+    ("paragraph.math-formula", "multiplemath"),
+    ("paragraph.quote-block", "blockquote"),
+    ("paragraph.order-list", "ol"),
+    ("paragraph.bullet-list", "ul"),
+    ("paragraph.paragraph", "p"),
+    ("paragraph.horizontal-line", "hr"),
+    ("paragraph.front-matter", "frontmatter"),
+];
 
 // Recently-used documents (4g): an "Open Recent" File submenu, persisted to
 // <config_dir>/recently-used-documents.json. Item ids are RECENT_PREFIX+path;
@@ -331,22 +419,36 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     *app.state::<MenuState>().open_recent.lock().unwrap() = Some(open_recent.clone());
     refresh_recent_menu(app);
 
+    // Export as HTML / PDF (renderer commands → in-app export dialog).
+    let export_menu = SubmenuBuilder::new(app, &tr.t("menu.file.export"))
+        .item(&cmd(app, "file.export-file-html", &tr.t("menu.file.exportHtml"), None)?)
+        .item(&cmd(app, "file.export-file-pdf", &tr.t("menu.file.exportPdf"), None)?)
+        .build()?;
+
     let file_menu = SubmenuBuilder::new(app, &tr.t("menu.file.file"))
         .item(&cmd(app, "file.new-tab", &tr.t("menu.file.newTab"), Some("CmdOrCtrl+T"))?)
         .item(&cmd(app, "file.new-window", &tr.t("menu.file.newWindow"), Some("CmdOrCtrl+Shift+N"))?)
         .separator()
         .item(&cmd(app, "file.open-file", &tr.t("menu.file.openFile"), Some("CmdOrCtrl+O"))?)
+        .item(&cmd(app, "file.open-folder", &tr.t("menu.file.openFolder"), Some("CmdOrCtrl+Shift+O"))?)
         .item(&open_recent)
         .separator()
         .item(&cmd(app, "file.save", &tr.t("menu.file.save"), Some("CmdOrCtrl+S"))?)
         .item(&cmd(app, "file.save-as", &tr.t("menu.file.saveAs"), Some("CmdOrCtrl+Shift+S"))?)
-        .item(&line_ending_menu)
+        .item(&check(app, AUTOSAVE_ID, &tr.t("menu.file.autoSave"), None)?)
+        .separator()
+        .item(&cmd(app, "file.move-file", &tr.t("menu.file.moveTo"), None)?)
+        .item(&cmd(app, "file.rename-file", &tr.t("menu.file.rename"), None)?)
+        .separator()
+        .item(&export_menu)
+        .item(&cmd(app, "file.print", &tr.t("menu.file.print"), None)?)
         .separator()
         .item(&cmd(app, "file.close-tab", &tr.t("menu.file.closeTab"), Some("CmdOrCtrl+W"))?)
         .item(&cmd(app, "file.close-window", &tr.t("menu.file.closeWindow"), Some("CmdOrCtrl+Shift+W"))?)
         .build()?;
 
-    // Native editing roles + app find/replace commands.
+    // Native editing roles + app commands. The line-ending submenu lives at
+    // the end like Electron's Edit menu.
     let edit_menu = SubmenuBuilder::new(app, &tr.t("menu.edit.edit"))
         .item(&PredefinedMenuItem::undo(app, Some(&tr.t("menu.edit.undo")))?)
         .item(&PredefinedMenuItem::redo(app, Some(&tr.t("menu.edit.redo")))?)
@@ -354,27 +456,93 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&PredefinedMenuItem::cut(app, Some(&tr.t("menu.edit.cut")))?)
         .item(&PredefinedMenuItem::copy(app, Some(&tr.t("menu.edit.copy")))?)
         .item(&PredefinedMenuItem::paste(app, Some(&tr.t("menu.edit.paste")))?)
+        .separator()
+        .item(&cmd(app, "edit.copy-as-rich", &tr.t("menu.edit.copyAsRich"), Some("CmdOrCtrl+Shift+C"))?)
+        .item(&cmd(app, "edit.copy-as-html", &tr.t("menu.edit.copyAsHtml"), None)?)
+        .item(&cmd(
+            app,
+            "edit.paste-as-plaintext",
+            &tr.t("menu.edit.pasteAsPlainText"),
+            Some("CmdOrCtrl+Shift+V"),
+        )?)
+        .separator()
         .item(&PredefinedMenuItem::select_all(app, Some(&tr.t("menu.edit.selectAll")))?)
+        .separator()
+        .item(&cmd(app, "edit.duplicate", &tr.t("menu.edit.duplicate"), Some("CmdOrCtrl+Alt+D"))?)
+        .item(&cmd(
+            app,
+            "edit.create-paragraph",
+            &tr.t("menu.edit.createParagraph"),
+            Some("Shift+CmdOrCtrl+N"),
+        )?)
+        .item(&cmd(
+            app,
+            "edit.delete-paragraph",
+            &tr.t("menu.edit.deleteParagraph"),
+            Some("Shift+CmdOrCtrl+D"),
+        )?)
         .separator()
         .item(&cmd(app, "edit.find", &tr.t("menu.edit.find"), Some("CmdOrCtrl+F"))?)
         .item(&cmd(app, "edit.replace", &tr.t("menu.edit.replace"), Some("CmdOrCtrl+Option+F"))?)
+        .separator()
+        .item(&cmd(
+            app,
+            "edit.find-in-folder",
+            &tr.t("menu.edit.findInFolder"),
+            Some("Shift+CmdOrCtrl+F"),
+        )?)
+        .separator()
+        .item(&line_ending_menu)
         .build()?;
 
+    // Paragraph-type items are checkable; the current selection's block type
+    // arrives via menu_update_paragraph (mt::editor-selection-changed).
     let paragraph_menu = SubmenuBuilder::new(app, &tr.t("menu.paragraph.paragraph"))
-        .item(&cmd(app, "paragraph.heading-1", &tr.t("menu.paragraph.heading1"), Some("CmdOrCtrl+1"))?)
-        .item(&cmd(app, "paragraph.heading-2", &tr.t("menu.paragraph.heading2"), Some("CmdOrCtrl+2"))?)
-        .item(&cmd(app, "paragraph.heading-3", &tr.t("menu.paragraph.heading3"), Some("CmdOrCtrl+3"))?)
-        .item(&cmd(app, "paragraph.heading-4", &tr.t("menu.paragraph.heading4"), Some("CmdOrCtrl+4"))?)
-        .item(&cmd(app, "paragraph.heading-5", &tr.t("menu.paragraph.heading5"), Some("CmdOrCtrl+5"))?)
-        .item(&cmd(app, "paragraph.heading-6", &tr.t("menu.paragraph.heading6"), Some("CmdOrCtrl+6"))?)
+        .item(&check(app, "paragraph.heading-1", &tr.t("menu.paragraph.heading1"), Some("CmdOrCtrl+1"))?)
+        .item(&check(app, "paragraph.heading-2", &tr.t("menu.paragraph.heading2"), Some("CmdOrCtrl+2"))?)
+        .item(&check(app, "paragraph.heading-3", &tr.t("menu.paragraph.heading3"), Some("CmdOrCtrl+3"))?)
+        .item(&check(app, "paragraph.heading-4", &tr.t("menu.paragraph.heading4"), Some("CmdOrCtrl+4"))?)
+        .item(&check(app, "paragraph.heading-5", &tr.t("menu.paragraph.heading5"), Some("CmdOrCtrl+5"))?)
+        .item(&check(app, "paragraph.heading-6", &tr.t("menu.paragraph.heading6"), Some("CmdOrCtrl+6"))?)
         .separator()
-        .item(&cmd(app, "paragraph.table", &tr.t("menu.paragraph.table"), None)?)
-        .item(&cmd(app, "paragraph.code-fence", &tr.t("menu.paragraph.codeFences"), None)?)
-        .item(&cmd(app, "paragraph.quote-block", &tr.t("menu.paragraph.quoteBlock"), None)?)
-        .item(&cmd(app, "paragraph.order-list", &tr.t("menu.paragraph.orderedList"), None)?)
-        .item(&cmd(app, "paragraph.bullet-list", &tr.t("menu.paragraph.bulletList"), None)?)
-        .item(&cmd(app, "paragraph.task-list", &tr.t("menu.paragraph.taskList"), None)?)
-        .item(&cmd(app, "paragraph.horizontal-line", &tr.t("menu.paragraph.horizontalRule"), None)?)
+        .item(&cmd(
+            app,
+            "paragraph.upgrade-heading",
+            &tr.t("menu.paragraph.promoteHeading"),
+            Some("CmdOrCtrl+Plus"),
+        )?)
+        .item(&cmd(
+            app,
+            "paragraph.degrade-heading",
+            &tr.t("menu.paragraph.demoteHeading"),
+            Some("CmdOrCtrl+-"),
+        )?)
+        .separator()
+        .item(&check(app, "paragraph.table", &tr.t("menu.paragraph.table"), Some("CmdOrCtrl+Shift+T"))?)
+        .item(&check(app, "paragraph.code-fence", &tr.t("menu.paragraph.codeFences"), Some("CmdOrCtrl+Alt+C"))?)
+        .item(&check(app, "paragraph.quote-block", &tr.t("menu.paragraph.quoteBlock"), Some("CmdOrCtrl+Alt+Q"))?)
+        .item(&check(app, "paragraph.math-formula", &tr.t("menu.paragraph.mathBlock"), Some("CmdOrCtrl+Alt+M"))?)
+        .item(&check(app, "paragraph.html-block", &tr.t("menu.paragraph.htmlBlock"), Some("CmdOrCtrl+Alt+J"))?)
+        .separator()
+        .item(&check(app, "paragraph.order-list", &tr.t("menu.paragraph.orderedList"), Some("CmdOrCtrl+Alt+O"))?)
+        .item(&check(app, "paragraph.bullet-list", &tr.t("menu.paragraph.bulletList"), Some("CmdOrCtrl+Alt+U"))?)
+        .item(&check(app, "paragraph.task-list", &tr.t("menu.paragraph.taskList"), Some("CmdOrCtrl+Alt+X"))?)
+        .separator()
+        .item(&check(
+            app,
+            "paragraph.loose-list-item",
+            &tr.t("menu.paragraph.looseListItem"),
+            Some("CmdOrCtrl+Alt+L"),
+        )?)
+        .separator()
+        .item(&check(app, "paragraph.paragraph", &tr.t("menu.paragraph.paragraph"), Some("CmdOrCtrl+0"))?)
+        .item(&check(
+            app,
+            "paragraph.horizontal-line",
+            &tr.t("menu.paragraph.horizontalRule"),
+            Some("CmdOrCtrl+Alt+-"),
+        )?)
+        .item(&check(app, "paragraph.front-matter", &tr.t("menu.paragraph.frontMatter"), Some("CmdOrCtrl+Alt+Y"))?)
         .build()?;
 
     // Format marks are checkable (state synced via menu_update_format).
@@ -382,9 +550,15 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&check(app, "format.strong", &tr.t("menu.format.bold"), Some("CmdOrCtrl+B"))?)
         .item(&check(app, "format.emphasis", &tr.t("menu.format.italic"), Some("CmdOrCtrl+I"))?)
         .item(&cmd(app, "format.underline", &tr.t("menu.format.underline"), Some("CmdOrCtrl+U"))?)
-        .item(&check(app, "format.inline-code", &tr.t("menu.format.inlineCode"), None)?)
-        .item(&check(app, "format.strike", &tr.t("menu.format.strikethrough"), None)?)
         .separator()
+        .item(&check(app, "format.superscript", &tr.t("menu.format.superscript"), None)?)
+        .item(&check(app, "format.subscript", &tr.t("menu.format.subscript"), None)?)
+        .item(&check(app, "format.highlight", &tr.t("menu.format.highlight"), None)?)
+        .separator()
+        .item(&check(app, "format.inline-code", &tr.t("menu.format.inlineCode"), None)?)
+        .item(&check(app, "format.inline-math", &tr.t("menu.format.inlineMath"), None)?)
+        .separator()
+        .item(&check(app, "format.strike", &tr.t("menu.format.strikethrough"), None)?)
         .item(&check(app, "format.hyperlink", &tr.t("menu.format.hyperlink"), Some("CmdOrCtrl+L"))?)
         .item(&check(app, "format.image", &tr.t("menu.format.image"), None)?)
         .separator()
@@ -433,19 +607,74 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let window_menu = SubmenuBuilder::new(app, &tr.t("menu.window.window"))
         .item(&PredefinedMenuItem::minimize(app, Some(&tr.t("menu.window.minimize")))?)
         .item(&PredefinedMenuItem::maximize(app, None)?)
+        .item(&check(app, ALWAYS_ON_TOP_ID, &tr.t("menu.window.alwaysOnTop"), None)?)
+        .separator()
+        .item(&cmd(
+            app,
+            "window.toggle-full-screen",
+            &tr.t("menu.window.fullScreen"),
+            Some("Ctrl+CmdOrCtrl+F"),
+        )?)
         .build()?;
 
-    MenuBuilder::new(app)
+    // Theme picker (radio-like check list, light/dark sections like Electron).
+    // Items use the `theme:` prefix — handled in handle_menu_event by writing
+    // the preference; checks re-sync via sync_pref_checks.
+    let mut theme_builder = SubmenuBuilder::new(app, &tr.t("menu.theme.theme")).item(&check(
+        app,
+        THEME_FOLLOW_SYSTEM_ID,
+        &tr.t("preferences.theme.followSystemTheme"),
+        None,
+    )?);
+    theme_builder = theme_builder.separator().item(
+        &MenuItemBuilder::new(tr.t("menu.theme.lightThemes"))
+            .enabled(false)
+            .build(app)?,
+    );
+    for (id, key) in LIGHT_THEMES {
+        theme_builder =
+            theme_builder.item(&check(app, &format!("{THEME_PREFIX}{id}"), &tr.t(key), None)?);
+    }
+    theme_builder = theme_builder.separator().item(
+        &MenuItemBuilder::new(tr.t("menu.theme.darkThemes"))
+            .enabled(false)
+            .build(app)?,
+    );
+    for (id, key) in DARK_THEMES {
+        theme_builder =
+            theme_builder.item(&check(app, &format!("{THEME_PREFIX}{id}"), &tr.t(key), None)?);
+    }
+    let theme_menu = theme_builder.build()?;
+
+    // Help: external links (opened Rust-side via the opener plugin).
+    let mut help_builder = SubmenuBuilder::new(app, &tr.t("menu.help.help"));
+    for (i, (id, key, _url)) in HELP_LINKS.iter().enumerate() {
+        // Group like Electron: reference/changelog | follow/support | community/license
+        if i == 2 || i == 4 {
+            help_builder = help_builder.separator();
+        }
+        help_builder = help_builder.item(&MenuItemBuilder::with_id(*id, tr.t(key)).build(app)?);
+    }
+    let help_menu = help_builder.build()?;
+
+    let menu = MenuBuilder::new(app)
         .items(&[
             &app_menu,
             &file_menu,
             &edit_menu,
             &paragraph_menu,
             &format_menu,
-            &view_menu,
             &window_menu,
+            &theme_menu,
+            &view_menu,
+            &help_menu,
         ])
-        .build()
+        .build()?;
+
+    // Initial pref-backed check state (theme radio + auto save).
+    sync_pref_checks_from_store(app);
+
+    Ok(menu)
 }
 
 /// First focused webview window, if any.
@@ -488,6 +717,29 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         crate::commands::context_menu::route_popup_click(app, id);
         return;
     }
+    // Help links open externally — no renderer involvement.
+    if id.starts_with(HELP_PREFIX) {
+        if let Some((_, _, url)) = HELP_LINKS.iter().find(|(item_id, _, _)| *item_id == id) {
+            let _ = tauri_plugin_opener::open_url(*url, None::<String>);
+        }
+        return;
+    }
+    // Theme entries write the preference directly (theme names are not
+    // renderer command ids); the pref broadcast applies it in every window
+    // and sync_pref_checks refreshes the radio state.
+    if id == THEME_FOLLOW_SYSTEM_ID {
+        let current = read_pref_bool(app, "followSystemTheme");
+        let mut change = serde_json::Map::new();
+        change.insert("followSystemTheme".into(), serde_json::Value::Bool(!current));
+        let _ = crate::commands::preferences::set_items_internal(app, change);
+        return;
+    }
+    if let Some(theme_id) = id.strip_prefix(THEME_PREFIX) {
+        let mut change = serde_json::Map::new();
+        change.insert("theme".into(), serde_json::Value::String(theme_id.to_string()));
+        let _ = crate::commands::preferences::set_items_internal(app, change);
+        return;
+    }
     // Line-ending entries are command *subcommands*, which the renderer's
     // command center can't dispatch by id — emit the dedicated event instead
     // (editor store listens on mt::set-line-ending). It re-sends
@@ -528,6 +780,75 @@ pub fn menu_update_line_ending(app: AppHandle, line_ending: String) {
 #[tauri::command]
 pub fn menu_update_sidebar(app: AppHandle, visible: bool) {
     app.state::<MenuState>().set(SIDEBAR_ID, visible);
+}
+
+/// `mt::editor-selection-changed` — check the Paragraph-menu entry matching
+/// the selection's block type (Electron's updateSelectionMenus checked-state;
+/// the enable/disable matrix for code/table/multiline selections is not
+/// ported yet).
+#[tauri::command]
+pub fn menu_update_paragraph(app: AppHandle, state: serde_json::Value) {
+    let menu_state = app.state::<MenuState>();
+    let affiliation = state.get("affiliation").and_then(|v| v.as_object());
+    for (menu_id, tag) in PARAGRAPH_MAP {
+        let checked = affiliation
+            .and_then(|aff| aff.get(*tag))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        menu_state.set(menu_id, checked);
+    }
+    let flag = |key: &str| state.get(key).and_then(serde_json::Value::as_bool).unwrap_or(false);
+    menu_state.set("paragraph.task-list", flag("isTaskList"));
+    menu_state.set("paragraph.loose-list-item", flag("isLooseListItem"));
+}
+
+/// Set a registered check item from other modules (e.g. always-on-top).
+pub fn set_check(app: &AppHandle, id: &str, checked: bool) {
+    app.state::<MenuState>().set(id, checked);
+}
+
+fn read_pref_bool(app: &AppHandle, key: &str) -> bool {
+    use tauri_plugin_store::StoreExt;
+    app.store("preferences.json")
+        .ok()
+        .and_then(|s| s.get(key))
+        .as_ref()
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn read_pref_string(app: &AppHandle, key: &str) -> Option<String> {
+    use tauri_plugin_store::StoreExt;
+    app.store("preferences.json")
+        .ok()
+        .and_then(|s| s.get(key))
+        .as_ref()
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
+/// Refresh the pref-backed checks (theme radio list, follow-system, auto
+/// save) from the store. Called after build_menu and from the preferences
+/// write path whenever one of those keys changes.
+pub fn sync_pref_checks_from_store(app: &AppHandle) {
+    let state = app.state::<MenuState>();
+    let theme = read_pref_string(app, "theme").unwrap_or_default();
+    for (id, _) in LIGHT_THEMES.iter().chain(DARK_THEMES.iter()) {
+        state.set(&format!("{THEME_PREFIX}{id}"), *id == theme);
+    }
+    state.set(THEME_FOLLOW_SYSTEM_ID, read_pref_bool(app, "followSystemTheme"));
+    state.set(AUTOSAVE_ID, read_pref_bool(app, "autoSave"));
+}
+
+/// Hook for the preferences write path: re-sync menu checks when a relevant
+/// key was changed.
+pub fn on_preferences_changed(app: &AppHandle, changed: &serde_json::Map<String, serde_json::Value>) {
+    if changed.contains_key("theme")
+        || changed.contains_key("followSystemTheme")
+        || changed.contains_key("autoSave")
+    {
+        sync_pref_checks_from_store(app);
+    }
 }
 
 /// `mt::view-layout-changed` — reflect View-menu toggles (sidebar/tabbar and

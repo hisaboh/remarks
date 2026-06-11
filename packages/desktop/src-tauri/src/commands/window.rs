@@ -220,6 +220,18 @@ pub fn window_request_close(window: WebviewWindow) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// `mt::window-toggle-always-on-top` — flip the window's always-on-top state
+/// and reflect it on the Window-menu check item.
+#[tauri::command]
+pub fn window_toggle_always_on_top(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    let current = window.is_always_on_top().map_err(|e| e.to_string())?;
+    window
+        .set_always_on_top(!current)
+        .map_err(|e| e.to_string())?;
+    crate::menu::set_check(&app, "window.toggle-always-on-top", !current);
+    Ok(())
+}
+
 /// Mark the window as closing (so the CloseRequested handler lets it through)
 /// and close it for real.
 pub fn mark_and_close(app: &AppHandle, window: &WebviewWindow) {

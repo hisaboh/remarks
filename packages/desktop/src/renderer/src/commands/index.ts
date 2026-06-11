@@ -173,6 +173,24 @@ const commands: CommandDescriptor[] = [
   // Edit
 
   {
+    id: 'edit.copy-as-rich',
+    execute: async() => {
+      bus.emit('copyAsRich', 'copyAsRich')
+    }
+  },
+  {
+    id: 'edit.copy-as-html',
+    execute: async() => {
+      bus.emit('copyAsHtml', 'copyAsHtml')
+    }
+  },
+  {
+    id: 'edit.paste-as-plaintext',
+    execute: async() => {
+      bus.emit('pasteAsPlainText', 'pasteAsPlainText')
+    }
+  },
+  {
     id: 'edit.undo',
     execute: async() => {
       focusEditorAndExecute(() => bus.emit('undo', 'undo'))

@@ -227,7 +227,10 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Shared write path — persists each entry and broadcasts the changed subset.
-fn set_items_internal(app: &AppHandle, mut settings: Map<String, Value>) -> Result<(), String> {
+pub(crate) fn set_items_internal(
+    app: &AppHandle,
+    mut settings: Map<String, Value>,
+) -> Result<(), String> {
     // React to theme-related changes before persisting so the recomputed `theme`
     // is written and broadcast in the same pass (mirrors Electron's
     // broadcast-preferences-changed handler).
@@ -238,6 +241,9 @@ fn set_items_internal(app: &AppHandle, mut settings: Map<String, Value>) -> Resu
         store.set(key, value.clone());
     }
     store.save().map_err(to_err)?;
+
+    // Re-sync pref-backed menu checks (theme radio / follow-system / autosave).
+    crate::menu::on_preferences_changed(app, &settings);
 
     // Rebuild the native menu so its labels pick up the new UI language (4j).
     // Sync command → already on the main thread, safe for macOS menu mutation.

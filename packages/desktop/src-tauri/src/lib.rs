@@ -138,6 +138,8 @@ pub fn run() {
             menu::menu_update_line_ending,
             menu::menu_update_sidebar,
             menu::menu_update_view,
+            menu::menu_update_paragraph,
+            commands::window::window_toggle_always_on_top,
             // user keybindings (Phase 4d)
             commands::keybindings::keybindings_get_user,
             commands::keybindings::keybindings_save_user,
