@@ -130,3 +130,20 @@ develop の G 監査(Electron 実機)に相当する Tauri 実機監査。
 | 日付 | フェーズ | 内容 |
 |---|---|---|
 | 2026-06-11 | 計画 | 本ドキュメント作成。マージのドライラン実施(コンフリクト 34 件を確認) |
+| 2026-06-11 | Phase 0–1 ✅ | `tauri2.0-muya-core` で develop をマージ(`bea9e9ff`)。コンフリクト 34 件を計画通り解決。desktop unit 465 / muya unit 678 / typecheck クリーン |
+| 2026-06-11 | Phase 2 ✅ | **vite 設定変更は不要だった**(develop も electron.vite.config.ts 未変更 — パッケージ解決のみで統合)。dev:tauri 起動・mu-* DOM 描画・セッション復元・ja メニューを確認 |
+| 2026-06-11 | Phase 2.5 | IME スモークで確定 Enter の段落分割を発見 → `2cb7ad41` keydown 229 ガード(muyajs と同一の WKWebView 癖)。ユーザー検証済み(確定/確定後Enter/離脱/文中挿入/ESC) |
+| 2026-06-11 | Phase 3 ✅ | `c8add1db` native fileDrop に画像ルート追加(bus 'insert-image' 経由)。spellcheck 属性・DIRNAME・フォーマットメニュー・キーバインドは適合済みを確認 |
+| 2026-06-11 | Phase 4 ✅ | 行コピペ仕様を移植: `add66b0f` ペースト側(コピー側は新エンジンが元々改行保持)→ `ea876148` text/html フレーバーに負けないよう text/plain からシグナル取得 → `df174e68` 行途中ペーストはカーソル位置で分割。`7599b0c9` Shift+↑/↓ のブロック境界クロス(WKWebView は素で越えられない — Playwright WebKit は越える環境差)。全てユーザー検証済み |
+| 2026-06-11 | Phase 5 ✅ | `d4795432` e2e-tauri を mu-* DOM へ書き換え、IME スペックは新エンジン版(keyCode 229 回帰含む)に置換。最終 19/19 グリーン、muya unit 686 |
+
+## 移行で得た知見(@muyajs/core × WKWebView)
+
+- **IME 確定 Enter は keyCode 229 で compositionend の後に届く** — `isComposed` フラグでは
+  防げない。muyajs と同じ癖が新エンジンでも踏み抜かれた(`content.ts` keydownHandler 冒頭でガード)。
+- **WKWebView の Shift+↑/↓ はブロックラッパーを縦に越えられない**(Playwright の新しめ
+  WebKit は越える)。Editor ディスパッチ層で境界クロスを自前実装し、エンジン差を吸収。
+- **muya の normal コピーは text/html も載せる**ため、ペースト系の挙動判定を markdown
+  (HTML 由来)に掛けると text/plain だけが保持する情報(末尾改行)を取り落とす。
+- e2e のクリップボード系ラウンドトリップは**両フレーバーを運ぶ**こと(text/plain のみだと
+  実コピーと挙動が分岐する盲点になる)。
