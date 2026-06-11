@@ -242,7 +242,16 @@ const copyCutCtrl = (ContentState) => {
     }
 
     let htmlData = wrapper.innerHTML
-    const textData = this.htmlToMarkdown(htmlData)
+    let textData = this.htmlToMarkdown(htmlData)
+
+    // A selection that ends at the start of another block includes the last
+    // line's terminator but none of that block's text, and htmlToMarkdown
+    // drops the resulting empty fragment. Restore the trailing newline so
+    // copying a full line (including its line break) pastes as a whole line
+    // instead of degrading to an inline string.
+    if (start.key !== end.key && end.offset === 0 && textData && !textData.endsWith('\n')) {
+      textData += '\n'
+    }
     htmlData = marked(textData)
 
     return { html: htmlData, text: textData }

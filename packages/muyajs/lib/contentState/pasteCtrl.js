@@ -282,6 +282,15 @@ const pasteCtrl = (ContentState) => {
     event.preventDefault()
     event.stopPropagation()
 
+    // renderRange (the partial-render window) was computed around the cursor
+    // at the time of the LAST render, but a plain click only moves the cursor
+    // without rendering. Pasting after such a click can mutate blocks outside
+    // the stale window — stateRender.partialRender would then splice the new
+    // HTML at the wrong DOM position (pasted text invisible until a later
+    // render, or surrounding lines corrupted). Paste is infrequent, so widen
+    // the window to the whole document.
+    this.renderRange = [null, null]
+
     // Normalise /r/n to /n to avoid errors with Muya's parsing
     const text = (rawText || event.clipboardData.getData('text/plain')).replace(/\r/g, '')
     let html = (rawHtml || event.clipboardData.getData('text/html')).replace(/\r/g, '')
@@ -461,6 +470,35 @@ const pasteCtrl = (ContentState) => {
 
     if (stateFragments.length <= 0) {
       return
+    }
+
+    // A trailing newline means whole line(s) were copied (a full line
+    // including its line break — the markdown parser would otherwise lose
+    // it). With the caret at the start of a block, insert the pasted
+    // line(s) as standalone block(s) before it instead of merging into it,
+    // matching plain-text-editor paste semantics. This also covers an empty
+    // block (e.g. the trailing empty line of a document): the line break is
+    // preserved because the empty block survives below the pasted lines.
+    // The caret stays at the start of the pushed-down line.
+    if (/\n$/.test(text) && start.offset === 0 && end.offset === 0) {
+      let anchor = null
+      for (const block of stateFragments) {
+        if (anchor === null) {
+          this.insertBefore(block, parent)
+        } else {
+          this.insertAfter(block, anchor)
+        }
+        anchor = block
+      }
+      this.cursor = {
+        start: { key: start.key, offset: 0 },
+        end: { key: start.key, offset: 0 },
+        isEdit: true
+      }
+      this.partialRender()
+      this.muya.dispatchSelectionChange()
+      this.muya.dispatchSelectionFormats()
+      return this.muya.dispatchChange()
     }
 
     // Step 1: if select content, cut the content, and chop the block text into two part by the cursor.
