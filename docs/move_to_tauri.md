@@ -161,7 +161,7 @@
 |---|---|---|
 | A1 | コード署名 + 公証 | **Apple Developer Program 加入**（Developer ID Application 証明書）。配線・文書化は完了済み、証明書を入れて環境変数を設定するだけ |
 | A2 | GitHub Releases へのリリースフロー | `latest.json` + `.tar.gz` + `.sig` 公開の CI ワークフロー（tauri-action）。**未着手**（`.github/workflows/` に `tauri build` を回すものが無い）。現状は手動手順を上記に文書化済み |
-| ~~A3~~ | ~~秘密鍵バックアップ~~ ✅ 完了 | CI 用正本 = GitHub Actions Repository secret `TAURI_SIGNING_PRIVATE_KEY`（write-only なので読み出し不可）。人間が復元できる控え = macOS パスワードアプリ（iCloud キーチェーン同期）。※この鍵はアプリ名変更時に作り直す暫定鍵（§E） |
+| ~~A3~~ | ~~秘密鍵バックアップ~~ ✅ 完了 | CI 用正本 = GitHub Actions Repository secret `TAURI_SIGNING_PRIVATE_KEY`（write-only なので読み出し不可）。人間が復元できる控え = macOS パスワードアプリ（iCloud キーチェーン同期）。※2026-06-11 のアプリ名変更（§E）でパスワード付き `remarks.key` に作り直し、secret・控えとも更新済み |
 
 ### B. 移植時に意図的にスキップした項目（DEFERRED）
 
@@ -212,12 +212,16 @@ https://github.com/hisaboh/remarks 。
   (サービス名 `tauri-remarks-signing`)から自動取得、見つからなければ警告。
   ローカルは `pnpm run build:tauri` だけで署名まで通る。
 
-**残作業(鍵まわり)**:
-- [x] `~/.tauri/remarks.key` をパスワード付きで生成(2026-06-11、ユーザーが対話実行)
+**鍵まわり — すべて完了(2026-06-11)**:
+- [x] `~/.tauri/remarks.key` をパスワード付きで生成(ユーザーが対話実行)
 - [x] 新公開鍵(key id F249506DD796E2F1)を `plugins.updater.pubkey` に反映
-- [ ] GitHub Actions secrets: `TAURI_SIGNING_PRIVATE_KEY` 差し替え +
-      `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 追加(A2 のリリース CI 整備時)
-- [ ] パスワードアプリの控え(§A3)を新鍵+パスワードで更新し、旧 `~/.tauri/marktext.key` を処分
+- [x] GitHub Actions secrets: `TAURI_SIGNING_PRIVATE_KEY` 差し替え +
+      `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 追加(A2 の CI 本体は引き続き未着手)
+- [x] パスワードアプリの控え(§A3)を新鍵+パスワードで更新
+- ローカルビルドのパスワードは macOS キーチェーン(`tauri-remarks-signing`)から
+  build-tauri.mjs が自動取得。
+
+**§E はこれで完了。** 残るは旧 `~/.tauri/marktext.key` の処分(任意・未リリース鍵)のみ。
 
 当初の計画メモ(波及範囲)は以下の通り:
 
