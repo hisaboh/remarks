@@ -208,7 +208,9 @@ https://github.com/hisaboh/remarks 。
 - 表示名 "MarkText" → "Remarks": `static/locales/*.json`(値のみ・キー名は不変)、
   タイトルバー、`index.html` の `<title>`。About 画面は正式名 "Remarks on Markdown"。
 - `scripts/build-tauri.mjs`: 鍵パス → `~/.tauri/remarks.key`、
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 未設定時は警告(パスワード付き鍵前提に変更)。
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 未設定時は macOS キーチェーン
+  (サービス名 `tauri-remarks-signing`)から自動取得、見つからなければ警告。
+  ローカルは `pnpm run build:tauri` だけで署名まで通る。
 
 **残作業(鍵まわり)**:
 - [x] `~/.tauri/remarks.key` をパスワード付きで生成(2026-06-11、ユーザーが対話実行)

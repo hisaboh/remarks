@@ -34,6 +34,20 @@ if (!env.TAURI_SIGNING_PRIVATE_KEY) {
   }
 }
 
+if (env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined && process.platform === 'darwin') {
+  // Local-build convenience: pull the key password from the macOS keychain
+  // (stored via `security add-generic-password -s tauri-remarks-signing -a $USER -w`).
+  const keychain = spawnSync(
+    'security',
+    ['find-generic-password', '-s', 'tauri-remarks-signing', '-w'],
+    { encoding: 'utf-8' }
+  )
+  if (keychain.status === 0) {
+    env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = keychain.stdout.trim()
+    console.log('[build-tauri] signing key password loaded from the keychain')
+  }
+}
+
 if (env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) {
   // The key is password-protected; without the password in the env the CLI
   // falls back to an interactive prompt, which fails in non-TTY builds
