@@ -56,6 +56,17 @@ const getEmojiPickerPatch = (): string => {
     : ''
 }
 
+// The user's custom CSS must win the cascade over the theme/common sheets,
+// regardless of which sheet happened to be created first (at boot the
+// customCss preference watcher can fire before addStyles appends the theme
+// sheet). Re-appending #custom-styles moves it back to the end of <head>.
+const ensureCustomStylesLast = (): void => {
+  const customStyleEle = document.querySelector('#custom-styles')
+  if (customStyleEle) {
+    document.head.appendChild(customStyleEle)
+  }
+}
+
 export const addThemeStyle = (theme: string): void => {
   const isCmRailscasts = railscastsThemes.includes(theme)
   const isCmOneDark = oneDarkThemes.includes(theme)
@@ -193,6 +204,8 @@ export const addThemeStyle = (theme: string): void => {
       cm.classList.add('cm-s-default')
     }
   }
+
+  ensureCustomStylesLast()
 }
 
 export const setWrapCodeBlocks = (value: boolean): void => {
@@ -210,6 +223,7 @@ export const setWrapCodeBlocks = (value: boolean): void => {
     styleEle = document.createElement('style')
     styleEle.setAttribute('id', CODE_WRAP_STYLE_ID)
     document.head.appendChild(styleEle)
+    ensureCustomStylesLast()
   }
 
   styleEle.innerHTML = result
@@ -227,6 +241,7 @@ export const setEditorWidth = (value: string): void => {
     styleEle = document.createElement('style')
     styleEle.setAttribute('id', EDITOR_WIDTH_STYLE_ID)
     document.head.appendChild(styleEle)
+    ensureCustomStylesLast()
   }
 
   styleEle.innerHTML = result
@@ -246,6 +261,7 @@ export const addCommonStyle = (options: CommonStyleOptions): void => {
     sheet = document.createElement('style')
     sheet.id = COMMON_STYLE_ID
     document.head.appendChild(sheet)
+    ensureCustomStylesLast()
   }
 
   let scrollbarStyle = ''
@@ -282,8 +298,10 @@ export const addCustomStyle = (options: CustomStyleOptions): void => {
   if (!customStyleEle) {
     customStyleEle = document.createElement('style')
     customStyleEle.id = 'custom-styles'
-    document.head.appendChild(customStyleEle)
   }
+  // Always (re-)append: the element must sit after the theme/common sheets
+  // in <head> so the user's CSS wins the cascade.
+  document.head.appendChild(customStyleEle)
   customStyleEle.innerHTML = customCss
 }
 
