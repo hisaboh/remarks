@@ -1,11 +1,10 @@
 name: Release MarkText
 
+# NOTE (Remarks fork): v* tags release the Tauri app via release-tauri.yml.
+# This Electron release workflow is kept runnable manually only, so the two
+# workflows never race on the same tag's GitHub Release.
 on:
-  push:
-    # Broad trigger so the validate job can reject malformed v-tags
-    # (e.g. `vbad.tag`) instead of them silently not triggering anything.
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}

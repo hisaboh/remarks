@@ -1,0 +1,111 @@
+# Release CI for the Tauri app (Remarks on Markdown) — task A2.
+#
+# Tag push `vX.Y.Z` → macOS arm64 build via tauri-action → DRAFT GitHub
+# Release with .dmg + .app.tar.gz + .sig + latest.json (updater feed).
+# Publish the draft manually after checking the artifacts; the updater
+# endpoint (releases/latest/download/latest.json) only serves published
+# releases.
+#
+# workflow_dispatch runs a signing/build smoke without creating a release.
+#
+# Updater signing uses repo secrets TAURI_SIGNING_PRIVATE_KEY +
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD (the password-protected
+# ~/.tauri/remarks.key — see docs/release_tauri.md). Apple code signing /
+# notarization is wired separately once a Developer ID certificate exists
+# (task A1): add APPLE_CERTIFICATE/APPLE_SIGNING_IDENTITY/APPLE_ID secrets
+# and an import-codesign-certs step.
+
+name: Release Remarks (Tauri)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: release-tauri-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & draft release (macOS arm64)
+    runs-on: macos-15
+
+    steps:
+      - name: Validate semver tag
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # SemVer 2.0.0 with leading "v" (same rule as the Electron release)
+          if ! [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$tag' is not a valid semver (expected vX.Y.Z[-prerelease][+build])"
+            exit 1
+          fi
+          echo "Tag '$tag' is valid."
+
+      - name: Check out Git repository
+        uses: actions/checkout@v4.3.1
+
+      # The updater compares versions from latest.json, so a tag that doesn't
+      # match the app version would strand or loop updaters. Fail early.
+      - name: Check tag matches the app version
+        if: github.ref_type == 'tag'
+        run: |
+          app_version=$(node -p "require('./packages/desktop/package.json').version")
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$app_version" != "$tag_version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match packages/desktop/package.json version $app_version"
+            exit 1
+          fi
+          echo "Version $app_version matches the tag."
+
+      # pnpm + Node + `pnpm install --ignore-scripts`. The skipped postinstall
+      # only matters for the Electron build (Electron download, native rebuild,
+      # patch-package for native-keymap, locale minification) — the Tauri
+      # renderer bundles the raw locales itself and uses no patched packages.
+      - name: Setup pnpm + Node + dependencies
+        uses: ./.github/actions/setup
+        with:
+          node-version: '24.14.1'
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2.8.1
+        with:
+          workspaces: packages/desktop/src-tauri
+
+      # Bundle the ripgrep sidecar (same as the prebuild:tauri hook, which
+      # tauri-action bypasses by invoking the tauri CLI directly).
+      - name: Stage ripgrep sidecar
+        run: pnpm -C packages/desktop run setup-ripgrep
+
+      - name: Build and draft the release
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: packages/desktop
+          # Without a tagName (workflow_dispatch) the action only builds —
+          # a signing/bundling smoke that uploads nothing.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: ${{ github.ref_type == 'tag' && format('Remarks {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: true
+          releaseBody: |
+            ## ⚠️ macOS での初回起動
+            現状ビルドは未署名です(Apple Developer ID なし)。Applications へ移動後、一度だけ検疫フラグを外してください:
+            ```
+            xattr -cr /Applications/Remarks.app
+            ```
+
+            ## 自動アップデート
+            このリリースの `latest.json` が更新フィードです。アプリ内「Check for Updates」から更新できます。

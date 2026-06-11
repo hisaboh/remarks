@@ -39,7 +39,21 @@ updater 用の `Remarks.app.tar.gz` + `.sig`(`bundle.createUpdaterArtifacts: tru
   ネイティブメニュー「Check for Updates」(`app.check-updates`)からも起動可。
   `boot_info.is_updatable` はリリースビルドで true。
 
-## 手動リリース手順(A2 の CI が未整備の間)
+## リリース手順(CI — `.github/workflows/release-tauri.yml`)
+
+1. `packages/desktop/package.json` の `version` を更新してコミット・push。
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`(タグとバージョンの一致を CI が検証する)。
+3. CI(macOS arm64)が tauri-action でビルドし、`.dmg` / `.app.tar.gz` / `.sig` /
+   `latest.json` を添付した**ドラフトリリース**を作成する。
+4. 成果物を確認してドラフトを公開する(updater エンドポイント
+   `releases/latest/download/latest.json` は公開済みリリースのみ参照する)。
+
+- プレリリース(`v1.2.3-beta.1` 等、`-` を含むタグ)は prerelease フラグ付きになる。
+- `workflow_dispatch` で実行すると**ビルドのみ**(リリース作成なし)— 署名・バンドルのスモークに使う。
+- このフォークでは `v*` タグ = Tauri リリース。Electron 版の `release.yml` は
+  手動トリガー(タグ ref を選んで workflow_dispatch)のみに退避済み。
+
+## 手動リリース手順(フォールバック)
 
 1. `packages/desktop/package.json` の `version` を更新。
 2. `pnpm run build:tauri`。
@@ -59,7 +73,6 @@ updater 用の `Remarks.app.tar.gz` + `.sig`(`bundle.createUpdaterArtifacts: tru
 }
 ```
 
-CI 化する場合は tauri-action が `latest.json` を自動生成する(残タスク A2)。
 
 ## コード署名・公証(macOS)
 

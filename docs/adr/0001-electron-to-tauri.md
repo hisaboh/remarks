@@ -77,7 +77,7 @@
 | 分類 | 内容 |
 |---|---|
 | A1 | コード署名 + 公証 — Apple Developer Program 加入待ち(配線・文書化済み) |
-| A2 | GitHub Releases リリース CI(tauri-action)— secrets 準備済み・未着手 |
+| ~~A2~~ | ~~リリース CI~~ ✅ 完了(2026-06-12)— `.github/workflows/release-tauri.yml`(v* タグ → ドラフトリリース + latest.json)。初回タグでの実走確認は未 |
 | B | DEFERRED: マルチウィンドウのセッション復元 / maximize・fullscreen イベント同期 / クリップボードのファイルパス推測(NSPasteboard)/ グローバルショートカット / スペルチェック右クリック候補 / unwatch / md.icns / ripgrep 非 UTF-8 行 |
 | C | tauri-driver 実機 E2E(Linux/Windows CI)、Electron E2E スペックの追加移植 |
 
