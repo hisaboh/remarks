@@ -735,6 +735,48 @@ class Clipboard {
                     ? new HtmlToMarkdown({ bulletListMarker }).generate(html)
                     : text;
 
+            // Whole-line paste: a trailing newline means complete line(s) were
+            // copied (`getClipboardData` serializes multi-block selections with
+            // their line terminator). With a collapsed caret at the start of a
+            // paragraph/heading, insert the pasted line(s) as standalone
+            // block(s) BEFORE it instead of splicing into its text — plain-text
+            // editor semantics. An empty paragraph also qualifies: it survives
+            // below the pasted lines, preserving the line break. The caret
+            // stays at the start of the pushed-down block.
+            if (
+                /\n$/.test(markdown)
+                && start.offset === 0
+                && end.offset === 0
+                && /^(?:paragraph\.content|atxheading\.content|setextheading\.content)$/.test(
+                    anchorBlock.blockName,
+                )
+            ) {
+                const states = new MarkdownToState({
+                    footnote,
+                    math,
+                    isGitlabCompatibilityEnabled,
+                    trimUnnecessaryCodeBlockEmptyLines,
+                    frontMatter,
+                }).generate(markdown);
+
+                if (states.length > 0) {
+                    let target: typeof wrapperBlock = null;
+                    for (const state of states) {
+                        const newBlock = ScrollPage.loadBlock(state.name).create(muya, state);
+                        if (target == null)
+                            wrapperBlock?.parent?.insertBefore(newBlock, wrapperBlock);
+                        else
+                            target.parent?.insertAfter(newBlock, target);
+
+                        target = newBlock;
+                    }
+
+                    anchorBlock.setCursor(0, 0, true);
+
+                    return;
+                }
+            }
+
             if (
                 /\n\n/.test(markdown)
                 && anchorBlock.blockName !== 'codeblock.content'
