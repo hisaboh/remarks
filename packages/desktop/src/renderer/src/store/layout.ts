@@ -141,19 +141,30 @@ export const useLayoutStore = defineStore('layout', () => {
     }
   }
 
+  function APPLY_VIEW_LAYOUT(layout: unknown): void {
+    const l = layout as LayoutPartial
+    if (l.rightColumn) {
+      SET_LAYOUT({
+        ...l,
+        rightColumn: l.rightColumn === rightColumn.value ? '' : l.rightColumn,
+        showSideBar: true
+      })
+    } else {
+      SET_LAYOUT(l)
+    }
+    DISPATCH_LAYOUT_MENU_ITEMS()
+  }
+
   function LISTEN_FOR_LAYOUT(): void {
     window.electron.ipcRenderer.on('mt::set-view-layout', (_e, layout) => {
-      const l = layout as unknown as LayoutPartial
-      if (l.rightColumn) {
-        SET_LAYOUT({
-          ...l,
-          rightColumn: l.rightColumn === rightColumn.value ? '' : l.rightColumn,
-          showSideBar: true
-        })
-      } else {
-        SET_LAYOUT(l)
-      }
-      DISPATCH_LAYOUT_MENU_ITEMS()
+      APPLY_VIEW_LAYOUT(layout)
+    })
+
+    // Same contract as mt::set-view-layout, but reachable from renderer
+    // commands (the view.toggle-toc command — under Tauri the menu dispatches
+    // commands instead of main-process actions).
+    bus.on('view:set-layout', (layout: unknown) => {
+      APPLY_VIEW_LAYOUT(layout)
     })
 
     window.electron.ipcRenderer.on('mt::toggle-view-layout-entry', (_e, entryName) => {

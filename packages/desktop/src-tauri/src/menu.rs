@@ -32,6 +32,10 @@ pub const CHECK_UPDATES_ID: &str = "app.check-updates";
 const LINE_ENDING_CRLF_ID: &str = "file.line-ending-crlf";
 const LINE_ENDING_LF_ID: &str = "file.line-ending-lf";
 const SIDEBAR_ID: &str = "view.toggle-sidebar";
+const TABBAR_ID: &str = "view.toggle-tabbar";
+const SOURCE_CODE_ID: &str = "view.source-code-mode";
+const TYPEWRITER_ID: &str = "view.typewriter-mode";
+const FOCUS_ID: &str = "view.focus-mode";
 
 // Recently-used documents (4g): an "Open Recent" File submenu, persisted to
 // <config_dir>/recently-used-documents.json. Item ids are RECENT_PREFIX+path;
@@ -78,6 +82,12 @@ impl MenuState {
     fn set(&self, id: &str, checked: bool) {
         if let Some(item) = self.checks.lock().unwrap().get(id) {
             let _ = item.set_checked(checked);
+        }
+    }
+
+    fn set_enabled(&self, id: &str, enabled: bool) {
+        if let Some(item) = self.checks.lock().unwrap().get(id) {
+            let _ = item.set_enabled(enabled);
         }
     }
 }
@@ -381,9 +391,43 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&cmd(app, "format.clear-format", &tr.t("menu.format.clearFormat"), None)?)
         .build()?;
 
+    // Mirrors Electron's menu/templates/view.ts (minus the dev-only items).
+    // Item ids are renderer command ids; the mode/layout toggles are
+    // CheckMenuItems whose state arrives via menu_update_view
+    // (mt::view-layout-changed) — in source-code mode the typewriter/focus
+    // entries are disabled, like Electron's viewLayoutChanged.
     let view_menu = SubmenuBuilder::new(app, &tr.t("menu.view.view"))
-        .item(&check(app, SIDEBAR_ID, &tr.t("menu.view.toggleSidebar"), None)?)
-        .item(&cmd(app, "view.toggle-tabbar", &tr.t("menu.view.toggleTabbar"), None)?)
+        .item(&cmd(
+            app,
+            "view.command-palette",
+            &tr.t("menu.view.commandPalette"),
+            Some("CmdOrCtrl+Shift+P"),
+        )?)
+        .separator()
+        .item(&check(
+            app,
+            SOURCE_CODE_ID,
+            &tr.t("menu.view.sourceCodeMode"),
+            Some("CmdOrCtrl+Alt+S"),
+        )?)
+        .item(&check(
+            app,
+            TYPEWRITER_ID,
+            &tr.t("menu.view.typewriterMode"),
+            Some("CmdOrCtrl+Alt+T"),
+        )?)
+        .item(&check(app, FOCUS_ID, &tr.t("menu.view.focusMode"), Some("CmdOrCtrl+Shift+J"))?)
+        .separator()
+        .item(&check(app, SIDEBAR_ID, &tr.t("menu.view.toggleSidebar"), Some("CmdOrCtrl+J"))?)
+        .item(&check(app, TABBAR_ID, &tr.t("menu.view.toggleTabbar"), Some("CmdOrCtrl+Alt+B"))?)
+        .item(&cmd(
+            app,
+            "view.toggle-toc",
+            &tr.t("menu.view.toggleTableOfContents"),
+            Some("CmdOrCtrl+K"),
+        )?)
+        .separator()
+        .item(&cmd(app, "view.reload-images", &tr.t("menu.view.reloadImages"), Some("CmdOrCtrl+R"))?)
         .build()?;
 
     let window_menu = SubmenuBuilder::new(app, &tr.t("menu.window.window"))
@@ -484,4 +528,27 @@ pub fn menu_update_line_ending(app: AppHandle, line_ending: String) {
 #[tauri::command]
 pub fn menu_update_sidebar(app: AppHandle, visible: bool) {
     app.state::<MenuState>().set(SIDEBAR_ID, visible);
+}
+
+/// `mt::view-layout-changed` — reflect View-menu toggles (sidebar/tabbar and
+/// the editing modes). Mirrors Electron's viewLayoutChanged: while
+/// source-code mode is on, the typewriter/focus toggles are disabled.
+#[tauri::command]
+pub fn menu_update_view(app: AppHandle, changes: HashMap<String, serde_json::Value>) {
+    let state = app.state::<MenuState>();
+    for (key, value) in &changes {
+        let v = value.as_bool().unwrap_or(false);
+        match key.as_str() {
+            "showSideBar" => state.set(SIDEBAR_ID, v),
+            "showTabBar" => state.set(TABBAR_ID, v),
+            "sourceCode" => {
+                state.set(SOURCE_CODE_ID, v);
+                state.set_enabled(TYPEWRITER_ID, !v);
+                state.set_enabled(FOCUS_ID, !v);
+            }
+            "typewriter" => state.set(TYPEWRITER_ID, v),
+            "focus" => state.set(FOCUS_ID, v),
+            _ => {}
+        }
+    }
 }

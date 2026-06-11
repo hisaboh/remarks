@@ -615,6 +615,26 @@ const commands: CommandDescriptor[] = [
       bus.emit('view:toggle-layout-entry', 'showTabBar')
     }
   },
+  {
+    id: 'view.command-palette',
+    execute: async() => {
+      bus.emit('show-command-palette')
+    }
+  },
+  {
+    id: 'view.toggle-toc',
+    execute: async() => {
+      // Same toggle semantics as the mt::set-view-layout path: selecting the
+      // already-shown column hides it.
+      bus.emit('view:set-layout', { rightColumn: 'toc' })
+    }
+  },
+  {
+    id: 'view.reload-images',
+    execute: async() => {
+      bus.emit('invalidate-image-cache')
+    }
+  },
 
   {
     id: 'view.text-direction',
