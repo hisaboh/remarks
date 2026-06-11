@@ -1547,6 +1547,9 @@ onMounted(() => {
     autoPairBracket: autoPairBracket.value,
     autoPairMarkdownSyntax: autoPairMarkdownSyntax.value,
     trimUnnecessaryCodeBlockEmptyLines: trimUnnecessaryCodeBlockEmptyLines.value,
+    // Keep authored blank-line runs through the source-mode/WYSIWYG round
+    // trip (CommonMark-default would drop them).
+    preserveEmptyLines: true,
     autoPairQuote: autoPairQuote.value,
     bulletListMarker: bulletListMarker.value,
     orderListDelimiter: orderListDelimiter.value,

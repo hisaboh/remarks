@@ -26,6 +26,7 @@ interface IMarkdownToStateOptions {
     isGitlabCompatibilityEnabled: boolean;
     trimUnnecessaryCodeBlockEmptyLines: boolean;
     frontMatter: boolean;
+    preserveEmptyLines?: boolean;
 };
 
 const DEFAULT_OPTIONS = {
@@ -34,6 +35,7 @@ const DEFAULT_OPTIONS = {
     isGitlabCompatibilityEnabled: true,
     trimUnnecessaryCodeBlockEmptyLines: false,
     frontMatter: true,
+    preserveEmptyLines: false,
 };
 
 export class MarkdownToState {
@@ -51,6 +53,7 @@ export class MarkdownToState {
             isGitlabCompatibilityEnabled = true,
             trimUnnecessaryCodeBlockEmptyLines = false,
             frontMatter = true,
+            preserveEmptyLines = false,
         } = this._options;
 
         // markdownToState injects synthetic `block-end` markers (see the
@@ -149,6 +152,9 @@ export class MarkdownToState {
                     // whitespace; `\S*` matches the empty string so this is
                     // always non-null even for `infoString === ''`.
                     const lang = (infoString || '').match(/\S*/)?.[0] ?? '';
+                    // Keep the full info string (pandoc attributes etc.) for
+                    // round-trip serialization.
+                    const info = (infoString || '').trim();
 
                     value = text;
                     // Fix: #1265.
@@ -184,6 +190,7 @@ export class MarkdownToState {
                             meta: {
                                 type: isFenced ? 'fenced' : 'indented',
                                 lang,
+                                ...(isFenced && info !== lang ? { info } : {}),
                             },
                             text: value,
                         };
@@ -365,6 +372,19 @@ export class MarkdownToState {
                 }
 
                 case 'space': {
+                    // A blank-line run between top-level blocks. `\n\n` is the
+                    // plain block separator; every newline beyond that is an
+                    // authored empty line. With `preserveEmptyLines` each one
+                    // becomes an empty paragraph so it survives the round trip
+                    // (the serializer writes empty paragraphs back as one
+                    // newline apiece). Default off: CommonMark ignores blank
+                    // lines, and the conformance suites rely on that.
+                    if (preserveEmptyLines && parentList.length === 1) {
+                        const newlines = (token.raw.match(/\n/g) ?? []).length;
+                        for (let i = 2; i < newlines; i++) {
+                            parentList[0].push({ name: 'paragraph' as const, text: '' });
+                        }
+                    }
                     break;
                 }
 

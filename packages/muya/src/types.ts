@@ -5,6 +5,10 @@ export interface IMuyaOptions {
     lineHeight: number;
     focusMode: boolean;
     trimUnnecessaryCodeBlockEmptyLines: boolean;
+    // Keep authored blank-line runs between top-level blocks as empty
+    // paragraphs so they survive the markdown round trip (off = CommonMark
+    // behavior: blank lines are ignored).
+    preserveEmptyLines: boolean;
     preferLooseListItem: boolean;
     autoPairBracket: boolean;
     autoPairMarkdownSyntax: boolean;

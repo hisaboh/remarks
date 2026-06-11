@@ -110,6 +110,16 @@ export default class ExportMarkdown {
                     break;
 
                 case 'paragraph':
+                    // An authored empty line: exactly one newline — the block
+                    // separator line doubles as its content, so blank-line
+                    // runs round-trip without growing.
+                    if (state.text === '') {
+                        this.insertLineBreak(result, indent);
+                        break;
+                    }
+                    this.insertLineBreak(result, indent);
+                    result.push(this.serializeTextParagraph(state, indent));
+                    break;
 
                 case 'thematic-break':
                     this.insertLineBreak(result, indent);
@@ -299,10 +309,13 @@ export default class ExportMarkdown {
         const result = [];
         const { text, meta } = state;
         const textList = text.split('\n');
-        const { type, lang } = meta;
+        const { type, lang, info } = meta;
+        // Prefer the full info string (pandoc attributes etc.) over the bare
+        // language token.
+        const fenceInfo = info ?? lang;
 
         if (type === 'fenced') {
-            result.push(`${indent}${lang ? `\`\`\`${lang}\n` : '```\n'}`);
+            result.push(`${indent}${fenceInfo ? `\`\`\`${fenceInfo}\n` : '```\n'}`);
             textList.forEach((text) => {
                 result.push(`${indent}${text}\n`);
             });

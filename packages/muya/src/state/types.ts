@@ -30,6 +30,11 @@ export interface ICodeBlockState {
     meta: {
         type: string; // "indented" | "fenced";
         lang: string;
+        // The full fence info string when it carries more than the language
+        // (e.g. pandoc attributes like `{#id .lang key="value"}`). `lang` is
+        // its first whitespace-delimited token; serialization prefers `info`
+        // so the extra attributes round-trip.
+        info?: string;
     };
     text: string;
 }

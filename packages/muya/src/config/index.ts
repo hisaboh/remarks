@@ -305,6 +305,7 @@ export const MUYA_DEFAULT_OPTIONS = {
     markdown: '',
     // Whether to trim the beginning and ending empty line in code block when open markdown.
     trimUnnecessaryCodeBlockEmptyLines: false,
+    preserveEmptyLines: false,
     preferLooseListItem: true,
     autoPairBracket: true,
     autoPairMarkdownSyntax: true,

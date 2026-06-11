@@ -42,6 +42,12 @@ class CodeBlock extends Parent {
     }
 
     set lang(value) {
+        // Editing the language invalidates a stored fence info string (the
+        // create-time `codeBlock.lang = lang` re-set passes the same value,
+        // which must NOT drop the info we just parsed).
+        if (this.meta.lang !== value && this.meta.info != null)
+            delete this.meta.info;
+
         this.meta.lang = value;
 
         if (this.meta.type !== 'fenced') {
