@@ -163,9 +163,19 @@ const eventSignature = (e: KeyboardEvent): string | null => {
 
 let signatureToCommand: Map<string, string> | null = null
 
+// Native editing shortcuts must NOT be dispatched: no renderer command is
+// registered for these ids (under Electron the menu items just called
+// webContents.cut()/copy()/paste()/selectAll(), i.e. the browser default
+// action). Matching them here would preventDefault() that default and break
+// cut/copy/paste/select-all in plain text fields (e.g. the settings
+// custom-CSS textarea) and in muya. WebKit and the predefined Edit menu
+// items handle them natively.
+const NATIVE_EDIT_COMMANDS = new Set(['edit.cut', 'edit.copy', 'edit.paste', 'edit.select-all'])
+
 const buildLookup = (): Map<string, string> => {
   const lookup = new Map<string, string>()
   for (const [id, accelerator] of mergedKeybindings()) {
+    if (NATIVE_EDIT_COMMANDS.has(id)) continue
     const sig = acceleratorSignature(accelerator)
     // First binding for a signature wins (defaults have no intra-map dupes).
     if (sig && !lookup.has(sig)) lookup.set(sig, id)
