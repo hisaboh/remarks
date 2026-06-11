@@ -78,9 +78,13 @@
 
 ### トレードオフ
 
-- 行コピペの挙動(行頭 = 前に挿入 / 行途中 = カーソルで分割 / 空行保持)は
-  upstream muya に無い Remarks 独自仕様となり、upstream 追従時に維持コストがかかる
-  (ユニットテスト + e2e で仕様を固定済み)。
+- upstream muya に無い **Remarks 独自仕様**が engine に増えており、upstream 追従時に
+  維持コストがかかる(いずれもユニットテスト/e2e で仕様を固定済み):
+  - 行コピペ(行頭 = 前に挿入 / 行途中 = カーソルで分割 / 空行保持)
+  - `preserveEmptyLines` オプション(連続空行を空段落として往復保持。
+    CommonMark 準拠スイートはデフォルト OFF で維持)
+  - コードフェンス info string の完全往復(`meta.info` — pandoc 属性等を保持)
+  - WKWebView 対応(IME keyCode 229 ガード、Shift+Arrow 境界クロス)
 - Shift+Arrow の列位置は折り返し行ではブロック端への近似(非折り返し行では正確)。
 
 ## 参照
