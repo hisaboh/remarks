@@ -1,8 +1,9 @@
 // Pasting whole line(s) — a copy that includes the line break must paste as
 // standalone line(s) at a block start instead of merging into the existing
-// block (and the muya copy handler must preserve that trailing newline).
+// block (the @muyajs/core port of the Remarks muyajs behavior, and the
+// copy side must preserve that trailing newline).
 import { expect, test, type Page } from '@playwright/test'
-import { launchEditor, typeIntoEditor } from './helpers'
+import { launchEditor, PARAGRAPH_CONTENT, typeIntoEditor } from './helpers'
 
 const setupTwoLines = async(page: Page): Promise<void> => {
   await launchEditor(page)
@@ -13,11 +14,15 @@ const setupTwoLines = async(page: Page): Promise<void> => {
 
 // Selects from the start of the first paragraph to the start of the second
 // (i.e. "alpha\n") and fires muya's copy handler with a synthetic clipboard.
-const copyLineWithNewline = (): { text: string; html: string } => {
-  const spans = document.querySelectorAll('.editor-component span.ag-paragraph')
-  const a = spans[0]
-  const b = spans[1]
-  window.getSelection()?.setBaseAndExtent(a.firstChild ?? a, 0, b.firstChild ?? b, 0)
+const copyLineWithNewline = (selector: string): { text: string; html: string } => {
+  const findText = (el: Element): Node => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    return walker.nextNode() ?? el
+  }
+  const paragraphs = document.querySelectorAll(selector)
+  const a = paragraphs[0]
+  const b = paragraphs[1]
+  window.getSelection()?.setBaseAndExtent(findText(a), 0, b.firstChild ?? b, 0)
   const dt = new DataTransfer()
   const ev = new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true })
   a.dispatchEvent(ev)
@@ -25,22 +30,20 @@ const copyLineWithNewline = (): { text: string; html: string } => {
 }
 
 const caretToStartOfBeta = async(page: Page): Promise<void> => {
-  await page.locator('.editor-component span.ag-paragraph', { hasText: 'beta' }).click()
+  await page.locator(PARAGRAPH_CONTENT, { hasText: 'beta' }).click()
   await page.keyboard.press('Meta+ArrowLeft')
 }
 
-const pasteText = (text: string): Promise<(string | null)[]> => {
+const pasteText = (args: { selector: string; text: string }): Promise<(string | null)[]> => {
   const dt = new DataTransfer()
-  dt.setData('text/plain', text)
+  dt.setData('text/plain', args.text)
   const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
-  const target = document.querySelectorAll('.editor-component span.ag-paragraph')[1]
-  target.dispatchEvent(ev)
+  const paragraphs = document.querySelectorAll(args.selector)
+  paragraphs[paragraphs.length - 1].dispatchEvent(ev)
   return new Promise((resolve) => {
     setTimeout(() => {
       resolve(
-        Array.from(document.querySelectorAll('.editor-component span.ag-paragraph')).map(
-          (s) => s.textContent
-        )
+        Array.from(document.querySelectorAll(args.selector)).map((s) => s.textContent)
       )
     }, 300)
   })
@@ -51,7 +54,7 @@ test('copying a line incl. its newline keeps the trailing \\n on the clipboard',
 }) => {
   await setupTwoLines(page)
 
-  const copied = await page.evaluate(copyLineWithNewline)
+  const copied = await page.evaluate(copyLineWithNewline, PARAGRAPH_CONTENT)
   expect(copied.text).toBe('alpha\n')
 })
 
@@ -61,7 +64,10 @@ test('pasting "alpha\\n" at the start of a line inserts a line instead of mergin
   await setupTwoLines(page)
   await caretToStartOfBeta(page)
 
-  const paragraphs = await page.evaluate(pasteText, 'alpha\n')
+  const paragraphs = await page.evaluate(pasteText, {
+    selector: PARAGRAPH_CONTENT,
+    text: 'alpha\n'
+  })
   expect(paragraphs).toEqual(['alpha', 'alpha', 'beta'])
 
   // The caret stays at the start of the pushed-down line.
@@ -73,7 +79,10 @@ test('pasting multiple whole lines at a line start inserts them all', async({ pa
   await setupTwoLines(page)
   await caretToStartOfBeta(page)
 
-  const paragraphs = await page.evaluate(pasteText, 'one\n\ntwo\n')
+  const paragraphs = await page.evaluate(pasteText, {
+    selector: PARAGRAPH_CONTENT,
+    text: 'one\n\ntwo\n'
+  })
   expect(paragraphs).toEqual(['alpha', 'one', 'two', 'beta'])
 })
 
@@ -81,7 +90,10 @@ test('pasting "alpha" (no trailing newline) at a line start still merges', async
   await setupTwoLines(page)
   await caretToStartOfBeta(page)
 
-  const paragraphs = await page.evaluate(pasteText, 'alpha')
+  const paragraphs = await page.evaluate(pasteText, {
+    selector: PARAGRAPH_CONTENT,
+    text: 'alpha'
+  })
   expect(paragraphs).toEqual(['alpha', 'alphabeta'])
 })
 
@@ -93,22 +105,10 @@ test('pasting a whole line onto the EMPTY last line keeps the empty line', async
   await page.keyboard.press('Enter')
   // caret now sits on the empty last line
 
-  const paragraphs = await page.evaluate((text: string) => {
-    const dt = new DataTransfer()
-    dt.setData('text/plain', text)
-    const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
-    const spans = document.querySelectorAll('.editor-component span.ag-paragraph')
-    spans[spans.length - 1].dispatchEvent(ev)
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve(
-          Array.from(document.querySelectorAll('.editor-component span.ag-paragraph')).map(
-            (s) => s.textContent
-          )
-        )
-      }, 300)
-    })
-  }, 'alpha\n')
+  const paragraphs = await page.evaluate(pasteText, {
+    selector: PARAGRAPH_CONTENT,
+    text: 'alpha\n'
+  })
   expect(paragraphs).toEqual(['alpha', 'beta', 'alpha', ''])
 })
 
@@ -117,8 +117,11 @@ test('muya→muya round trip: copy line incl. newline, paste at another line sta
 }) => {
   await setupTwoLines(page)
 
-  const copied = await page.evaluate(copyLineWithNewline)
+  const copied = await page.evaluate(copyLineWithNewline, PARAGRAPH_CONTENT)
   await caretToStartOfBeta(page)
-  const paragraphs = await page.evaluate(pasteText, copied.text)
+  const paragraphs = await page.evaluate(pasteText, {
+    selector: PARAGRAPH_CONTENT,
+    text: copied.text
+  })
   expect(paragraphs).toEqual(['alpha', 'alpha', 'beta'])
 })

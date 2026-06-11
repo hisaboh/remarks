@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test'
-import { launchEditor } from './helpers'
+import { launchEditor, PARAGRAPH_CONTENT } from './helpers'
 
 test('boots the renderer against the Tauri mock with a blank untitled tab', async({ page }) => {
   await launchEditor(page)
 
   await expect(page.locator('.editor-component')).toBeVisible()
   // A blank launch renders one empty content paragraph.
-  await expect(page.locator('.editor-component span.ag-paragraph').first()).toBeAttached()
+  await expect(page.locator(PARAGRAPH_CONTENT).first()).toBeAttached()
 })
 
 test('bootstrap handshake reaches the backend exactly once', async({ page }) => {

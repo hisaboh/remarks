@@ -58,6 +58,10 @@ export const buildMockConfig = (overrides: Partial<TauriMockConfig> = {}): Tauri
   }
 }
 
+// @muyajs/core paragraph leaf (the editable content element inside a
+// `.mu-paragraph` block). Keep selectors here — specs should not hard-code.
+export const PARAGRAPH_CONTENT = '.editor-component .mu-paragraph-content'
+
 export const launchEditor = async(
   page: Page,
   overrides: Partial<TauriMockConfig> = {}
@@ -65,20 +69,13 @@ export const launchEditor = async(
   await page.addInitScript(installTauriMock, buildMockConfig(overrides))
   await page.goto('/')
   await page.waitForSelector('.editor-component', { state: 'attached', timeout: 15000 })
-  await page.waitForFunction(
-    () => {
-      const el = document.querySelector('.editor-component')
-      return !!el && el.children.length > 0
-    },
-    null,
-    { timeout: 15000 }
-  )
+  // A blank launch renders one empty paragraph once muya has booted.
+  await page.waitForSelector(PARAGRAPH_CONTENT, { state: 'attached', timeout: 15000 })
 }
 
-// Muya validates selections via `.ag-paragraph` content spans; click the first
-// one (or the supplied locator) to give the editor a caret before typing.
+// Click the first paragraph content to give the editor a caret before typing.
 export const clickFirstParagraph = async(page: Page): Promise<void> => {
-  await page.click('.editor-component span.ag-paragraph', { timeout: 5000 })
+  await page.click(PARAGRAPH_CONTENT, { timeout: 5000 })
 }
 
 export const typeIntoEditor = async(page: Page, text: string): Promise<void> => {
@@ -88,8 +85,7 @@ export const typeIntoEditor = async(page: Page, text: string): Promise<void> => 
 
 // The first content paragraph of the document (muya renders one empty
 // paragraph for a blank untitled tab).
-export const firstParagraph = (page: Page) =>
-  page.locator('.editor-component span.ag-paragraph').first()
+export const firstParagraph = (page: Page) => page.locator(PARAGRAPH_CONTENT).first()
 
 export const expectEditorContains = async(page: Page, text: string): Promise<void> => {
   await expect(page.locator('.editor-component')).toContainText(text)
