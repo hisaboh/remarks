@@ -38,6 +38,8 @@ const TYPEWRITER_ID: &str = "view.typewriter-mode";
 const FOCUS_ID: &str = "view.focus-mode";
 const AUTOSAVE_ID: &str = "file.toggle-auto-save";
 const ALWAYS_ON_TOP_ID: &str = "window.toggle-always-on-top";
+const DEVTOOLS_ID: &str = "view.toggle-dev-tools";
+const DEV_RELOAD_ID: &str = "view.dev-reload";
 
 // Theme menu items carry a `theme:` prefix (theme names are not renderer
 // command ids); handle_menu_event writes the preference directly.
@@ -604,6 +606,24 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&cmd(app, "view.reload-images", &tr.t("menu.view.reloadImages"), Some("CmdOrCtrl+R"))?)
         .build()?;
 
+    // Dev-only entries, like Electron's MARKTEXT_DEBUG block. The devtools
+    // APIs only exist in debug builds (or with the `devtools` feature).
+    if cfg!(debug_assertions) {
+        view_menu.append(&PredefinedMenuItem::separator(app)?)?;
+        view_menu.append(&cmd(
+            app,
+            DEVTOOLS_ID,
+            &tr.t("menu.view.showDeveloperTools"),
+            Some("CmdOrCtrl+Alt+I"),
+        )?)?;
+        view_menu.append(&cmd(
+            app,
+            DEV_RELOAD_ID,
+            &tr.t("menu.view.reloadWindow"),
+            Some("CmdOrCtrl+Alt+R"),
+        )?)?;
+    }
+
     let window_menu = SubmenuBuilder::new(app, &tr.t("menu.window.window"))
         .item(&PredefinedMenuItem::minimize(app, Some(&tr.t("menu.window.minimize")))?)
         .item(&PredefinedMenuItem::maximize(app, None)?)
@@ -716,6 +736,26 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
     {
         crate::commands::context_menu::route_popup_click(app, id);
         return;
+    }
+    // Dev-only entries (the menu items only exist in debug builds).
+    #[cfg(debug_assertions)]
+    {
+        if id == DEVTOOLS_ID {
+            if let Some(window) = focused_window(app) {
+                if window.is_devtools_open() {
+                    window.close_devtools();
+                } else {
+                    window.open_devtools();
+                }
+            }
+            return;
+        }
+        if id == DEV_RELOAD_ID {
+            if let Some(window) = focused_window(app) {
+                let _ = window.eval("window.location.reload()");
+            }
+            return;
+        }
     }
     // Help links open externally — no renderer involvement.
     if id.starts_with(HELP_PREFIX) {

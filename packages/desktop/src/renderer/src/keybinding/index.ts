@@ -170,7 +170,16 @@ let signatureToCommand: Map<string, string> | null = null
 // cut/copy/paste/select-all in plain text fields (e.g. the settings
 // custom-CSS textarea) and in muya. WebKit and the predefined Edit menu
 // items handle them natively.
-const NATIVE_EDIT_COMMANDS = new Set(['edit.cut', 'edit.copy', 'edit.paste', 'edit.select-all'])
+const NATIVE_EDIT_COMMANDS = new Set([
+  'edit.cut',
+  'edit.copy',
+  'edit.paste',
+  'edit.select-all',
+  // Dev-only menu entries handled entirely Rust-side (devtools / reload):
+  // letting the keydown through lets the native menu accelerator fire.
+  'view.toggle-dev-tools',
+  'view.dev-reload'
+])
 
 const buildLookup = (): Map<string, string> => {
   const lookup = new Map<string, string>()
