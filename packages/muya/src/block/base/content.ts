@@ -554,6 +554,14 @@ class Content extends TreeNode {
         if (!isKeyboardEvent(event))
             return;
 
+        // WebKit (WKWebView) delivers the IME-commit Enter as a keydown with
+        // keyCode 229 *after* compositionend has already cleared `isComposed`,
+        // so the per-key guards below would treat it as a real Enter and split
+        // the paragraph mid-commit. 229 marks IME-processed keys; skip them
+        // (Chromium sets `isComposing` on such events instead).
+        if (event.isComposing || event.keyCode === 229)
+            return;
+
         // TODO: move codes bellow to muya.ui ?
         if (
             this.muya.ui.shownFloat.size > 0
