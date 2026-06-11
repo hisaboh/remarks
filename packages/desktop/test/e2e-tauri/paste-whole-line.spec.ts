@@ -156,6 +156,31 @@ test('muya→muya round trip: copy line incl. newline, paste at another line sta
   expect(paragraphs).toEqual(['alpha', 'alpha', 'beta'])
 })
 
+test('pasting a whole line mid-line splits at the caret (text-editor semantics)', async({
+  page
+}) => {
+  await setupTwoLines(page)
+
+  const copied = await page.evaluate(copyLineWithNewline, PARAGRAPH_CONTENT)
+
+  // Caret between "be" and "ta".
+  await page.locator(PARAGRAPH_CONTENT, { hasText: 'beta' }).click()
+  await page.keyboard.press('Meta+ArrowLeft')
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('ArrowRight')
+
+  const paragraphs = await page.evaluate(pasteText, {
+    selector: PARAGRAPH_CONTENT,
+    text: copied.text,
+    html: copied.html
+  })
+  expect(paragraphs).toEqual(['alpha', 'bealpha', 'ta'])
+
+  // The caret sits at the start of the back half.
+  await page.keyboard.type('X', { delay: 0 })
+  await expect(page.locator('.editor-component')).toContainText('Xta')
+})
+
 test('keyboard round trip: select line via Shift+Down, copy, paste at another line head', async({
   page
 }) => {

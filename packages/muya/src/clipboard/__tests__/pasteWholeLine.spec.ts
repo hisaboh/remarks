@@ -33,6 +33,7 @@ vi.mock('../../block/scrollPage', () => ({
                 name,
                 state,
                 parent: null,
+                firstContentInDescendant: () => ({ setCursor: () => {} }),
             }),
         }),
     },
@@ -167,14 +168,52 @@ describe('clipboard.pasteHandler — whole-line paste', () => {
         expect(anchorBlock.setCursor).toHaveBeenCalledWith(5, 5, true);
     });
 
-    it('still merges when the caret is mid-line', async () => {
+    it('splits the line when the caret is mid-line (text-editor semantics)', async () => {
         const { anchorBlock, inserted } = makeAnchorWithWrapper('beta', 2);
         const clipboard = makeClipboard(anchorBlock);
 
         await clipboard.pasteHandler(makePasteEvent({ 'text/plain': 'alpha\n' }));
 
-        expect(inserted).toHaveLength(0);
-        expect(anchorBlock.text).toBe('bealpha\nta');
+        // "be|ta" + "alpha\n" → "bealpha" / "ta" — the first pasted line
+        // merges into the front half, the back half becomes its own line.
+        expect(anchorBlock.text).toBe('bealpha');
+        expect(inserted).toHaveLength(1);
+        expect(inserted[0]).toMatchObject({
+            method: 'insertAfter',
+            state: { name: 'paragraph', text: 'ta' },
+        });
+    });
+
+    it('appends a trailing empty line when pasting a whole line at the line end', async () => {
+        const { anchorBlock, inserted } = makeAnchorWithWrapper('beta', 4);
+        const clipboard = makeClipboard(anchorBlock);
+
+        await clipboard.pasteHandler(makePasteEvent({ 'text/plain': 'alpha\n' }));
+
+        expect(anchorBlock.text).toBe('betaalpha');
+        expect(inserted).toHaveLength(1);
+        expect(inserted[0]).toMatchObject({
+            method: 'insertAfter',
+            state: { name: 'paragraph', text: '' },
+        });
+    });
+
+    it('inserts the middle lines when pasting multiple whole lines mid-line', async () => {
+        const { anchorBlock, inserted } = makeAnchorWithWrapper('beta', 2);
+        const clipboard = makeClipboard(anchorBlock);
+
+        await clipboard.pasteHandler(makePasteEvent({ 'text/plain': 'one\n\ntwo\n' }));
+
+        expect(anchorBlock.text).toBe('beone');
+        expect(inserted).toHaveLength(2);
+        expect(inserted[0]).toMatchObject({
+            method: 'insertAfter',
+            state: { name: 'paragraph', text: 'two' },
+        });
+        expect(inserted[1]).toMatchObject({
+            method: 'insertAfter',
+            state: { name: 'paragraph', text: 'ta' },
+        });
     });
 
     it('does not apply inside code block content', async () => {

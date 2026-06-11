@@ -750,8 +750,7 @@ class Clipboard {
             // text/plain faithfully keeps.
             if (
                 /\n$/.test(text)
-                && start.offset === 0
-                && end.offset === 0
+                && start.offset === end.offset
                 && /^(?:paragraph\.content|atxheading\.content|setextheading\.content)$/.test(
                     anchorBlock.blockName,
                 )
@@ -764,7 +763,8 @@ class Clipboard {
                     frontMatter,
                 }).generate(markdown);
 
-                if (states.length > 0) {
+                if (states.length > 0 && start.offset === 0) {
+                    // Caret at the block start: pasted line(s) go before it.
                     let target: typeof wrapperBlock = null;
                     for (const state of states) {
                         const newBlock = ScrollPage.loadBlock(state.name).create(muya, state);
@@ -777,6 +777,43 @@ class Clipboard {
                     }
 
                     anchorBlock.setCursor(0, 0, true);
+
+                    return;
+                }
+
+                if (states.length > 0) {
+                    // Caret mid-line (or at the line end): literal text-editor
+                    // semantics — split the line at the caret, merge the first
+                    // pasted line into the front half, insert the remaining
+                    // line(s), and the back half becomes its own line with the
+                    // caret at its start.
+                    const pre = content.substring(0, start.offset);
+                    const post = content.substring(end.offset);
+
+                    let rest = states;
+                    const firstState = states[0];
+                    if (isParagraphState(firstState)) {
+                        anchorBlock.text = pre + firstState.text;
+                        rest = states.slice(1);
+                    }
+                    else {
+                        anchorBlock.text = pre;
+                    }
+                    anchorBlock.update();
+
+                    let target = wrapperBlock;
+                    for (const state of rest) {
+                        const newBlock = ScrollPage.loadBlock(state.name).create(muya, state);
+                        target?.parent?.insertAfter(newBlock, target);
+                        target = newBlock;
+                    }
+
+                    const postBlock = ScrollPage.loadBlock('paragraph').create(muya, {
+                        name: 'paragraph',
+                        text: post,
+                    });
+                    target?.parent?.insertAfter(postBlock, target);
+                    postBlock.firstContentInDescendant()?.setCursor(0, 0, true);
 
                     return;
                 }
