@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2.json",
-  "identifier": "app.marktext.marktext",
-  "productName": "marktext",
+  "identifier": "io.github.hisaboh.remarks",
+  "productName": "Remarks",
   "version": "../package.json",
   "build": {
     "frontendDist": "../out/renderer",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "MarkText",
+        "title": "Remarks",
         "width": 1200,
         "height": 800,
         "minWidth": 600,
@@ -35,11 +35,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/rg"],
+    "externalBin": [
+      "binaries/rg"
+    ],
     "category": "Productivity",
-    "copyright": "Copyright © MarkText contributors",
+    "copyright": "Copyright © Hisanaga MAKINO and MarkText contributors",
     "shortDescription": "A simple and elegant markdown editor.",
-    "longDescription": "MarkText is a simple and elegant open-source markdown editor focused on speed and usability.",
+    "longDescription": "Remarks on Markdown is a simple and elegant open-source markdown editor focused on speed and usability.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -49,7 +51,17 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["md", "markdown", "mmd", "mdown", "mkd", "mkdn", "mdwn", "mdtxt", "mdtext"],
+        "ext": [
+          "md",
+          "markdown",
+          "mmd",
+          "mdown",
+          "mkd",
+          "mkdn",
+          "mdwn",
+          "mdtxt",
+          "mdtext"
+        ],
         "name": "Markdown",
         "description": "Markdown document",
         "role": "Editor",
@@ -63,9 +75,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgzMjNFMTYwOEU5QTdEOUMKUldTY2ZacU9ZT0VqZ3dQTzZVN3lFNmhSYk8wWU5IQ1JKQzRRczBXWUs3d21URUdSdDNDZVNNaEIK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYyNDk1MDZERDc5NkUyRjEKUldUeDRwYlhiVkJKOGhrY01RdHBXNDJWNEZzcjNQaW9JK2RzdG1tcFZ5b1RHekN3WGNFTXZYWHYK",
       "endpoints": [
-        "https://github.com/marktext/marktext/releases/latest/download/latest.json"
+        "https://github.com/hisaboh/remarks/releases/latest/download/latest.json"
       ]
     }
   }

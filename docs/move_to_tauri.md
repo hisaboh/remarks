@@ -195,12 +195,29 @@
 - D1: 単一行 `$$...$$` ブロック数式が raw 表示 — **Electron 版でも同じ** muya パーサー挙動
   （移行スコープ外）
 
-### E. 将来のアプリ名変更チェックリスト（未着手・まとめて実施予定）
+### E. アプリ名変更チェックリスト（2026-06-11 実施）
 
-アプリ名（identifier / productName）を変更する際にまとめて対応する。updater 鍵の
-再生成・パスワード付き化・鍵名変更もこのタイミングで一括実施する方針
-（鍵は一度公開リリースに使うと差し替え不可になるため、**初回公開リリース前の今が
-やり直しの好機**）。波及範囲:
+**実施済み**: アプリ名 = **Remarks on Markdown**(表示名 = **Remarks**)、配布元 =
+https://github.com/hisaboh/remarks 。
+- `tauri.conf.json`: `identifier` → `io.github.hisaboh.remarks`、`productName` → `Remarks`、
+  ウィンドウタイトル、updater `endpoints` → hisaboh/remarks の latest.json。
+- 旧 Tauri identifier(`app.marktext.marktext`)→ 新 identifier のデータ移行を
+  `migration.rs::import_old_tauri_data` として新設(初回起動時に新ディレクトリに無い
+  ファイルのみコピー。Electron インポートより先に実行され、移行済みストアが空でなくなる
+  ことで Electron 側の上書きを防ぐ)。旧ディレクトリはバックアップとして残置。
+- 表示名 "MarkText" → "Remarks": `static/locales/*.json`(値のみ・キー名は不変)、
+  タイトルバー、`index.html` の `<title>`。About 画面は正式名 "Remarks on Markdown"。
+- `scripts/build-tauri.mjs`: 鍵パス → `~/.tauri/remarks.key`、
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 未設定時は警告(パスワード付き鍵前提に変更)。
+
+**残作業(鍵まわり)**:
+- [x] `~/.tauri/remarks.key` をパスワード付きで生成(2026-06-11、ユーザーが対話実行)
+- [x] 新公開鍵(key id F249506DD796E2F1)を `plugins.updater.pubkey` に反映
+- [ ] GitHub Actions secrets: `TAURI_SIGNING_PRIVATE_KEY` 差し替え +
+      `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 追加(A2 のリリース CI 整備時)
+- [ ] パスワードアプリの控え(§A3)を新鍵+パスワードで更新し、旧 `~/.tauri/marktext.key` を処分
+
+当初の計画メモ(波及範囲)は以下の通り:
 
 - **`tauri.conf.json`**
   - `identifier`（現 `app.marktext.marktext`）— ⚠️ これを変えると `app_data_dir` の

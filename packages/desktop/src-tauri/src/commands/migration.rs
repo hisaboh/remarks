@@ -22,9 +22,84 @@ use tauri_plugin_store::StoreExt;
 use super::data_center::DATA_CENTER_FILE;
 use super::preferences::PREFERENCES_FILE;
 
+/// Bundle identifier the app shipped under before the rename to
+/// "Remarks on Markdown" (io.github.hisaboh.remarks). Its data dir is left
+/// in place as a backup; we only copy out of it.
+const OLD_TAURI_IDENTIFIER: &str = "app.marktext.marktext";
+
 fn old_user_data_dir(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().config_dir().ok()?.join("marktext");
     dir.is_dir().then_some(dir)
+}
+
+/// Recursively copy `src` into `dst`, skipping files that already exist at
+/// the destination. Returns the number of files copied.
+fn copy_dir_missing(src: &Path, dst: &Path) -> std::io::Result<usize> {
+    let mut copied = 0usize;
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let target = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copied += copy_dir_missing(&entry.path(), &target)?;
+        } else if !target.exists() {
+            std::fs::copy(entry.path(), &target)?;
+            copied += 1;
+        }
+    }
+    Ok(copied)
+}
+
+/// One-time import of the previous Tauri install's user data after the
+/// identifier change (app.marktext.marktext → io.github.hisaboh.remarks).
+/// The stores, keybindings.json, editor-buffer/ and recently-used documents
+/// all live in the per-identifier config/data dirs, so a plain copy of any
+/// files the new dirs don't have yet brings everything across; the
+/// preferences/data-center inits reconcile the stores right afterwards.
+/// Must run BEFORE `import_electron_data` so a migrated (non-empty) store
+/// stops the Electron import from overwriting newer Tauri-era settings.
+pub fn import_old_tauri_data(app: &AppHandle) {
+    // config_dir and data_dir coincide on macOS but differ on Linux; handle
+    // both pairs and dedupe.
+    let pairs = [
+        (
+            app.path()
+                .config_dir()
+                .ok()
+                .map(|d| d.join(OLD_TAURI_IDENTIFIER)),
+            app.path().app_config_dir().ok(),
+        ),
+        (
+            app.path()
+                .data_dir()
+                .ok()
+                .map(|d| d.join(OLD_TAURI_IDENTIFIER)),
+            app.path().app_data_dir().ok(),
+        ),
+    ];
+    let mut done: Vec<PathBuf> = Vec::new();
+    for (old_dir, new_dir) in pairs {
+        let (Some(old_dir), Some(new_dir)) = (old_dir, new_dir) else {
+            continue;
+        };
+        if !old_dir.is_dir() || old_dir == new_dir || done.contains(&old_dir) {
+            continue;
+        }
+        match copy_dir_missing(&old_dir, &new_dir) {
+            Ok(n) if n > 0 => {
+                log::info!(
+                    "migrated {n} files from the previous install at {}",
+                    old_dir.display()
+                );
+            }
+            Ok(_) => {}
+            Err(e) => log::error!(
+                "failed to migrate previous install data from {}: {e}",
+                old_dir.display()
+            ),
+        }
+        done.push(old_dir);
+    }
 }
 
 fn read_map(path: &Path) -> Option<Map<String, Value>> {

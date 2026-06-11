@@ -69,8 +69,11 @@ pub fn run() {
         .setup(|app| {
             // Seed/reconcile persisted settings before the renderer asks for them.
             let handle = app.handle();
-            // First-run only: import the Electron install's user data so the
-            // inits below reconcile it like any other upgrade (Phase 6).
+            // First-run only: bring over the pre-rename Tauri install's data
+            // (identifier change moved the data dirs), then any Electron-era
+            // user data, so the inits below reconcile them like any other
+            // upgrade (Phase 6 / §E rename).
+            commands::migration::import_old_tauri_data(handle);
             commands::migration::import_electron_data(handle);
             if let Err(e) = commands::preferences::init(handle) {
                 log::error!("preferences init failed: {e}");
