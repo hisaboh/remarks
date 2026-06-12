@@ -45,6 +45,8 @@ class JSONState {
 
     private _isGoing = false;
 
+    private _rafHandle: number | null = null;
+
     private _state: TState[] = [];
 
     constructor(public muya: Muya, stateOrMarkdown: TState[] | string) {
@@ -229,33 +231,61 @@ class JSONState {
 
         this._isGoing = true;
 
-        requestAnimationFrame(() => {
-            // Wrap compose in a lambda — `Array.prototype.reduce` passes
-            // (acc, current, index, array) to the callback, but
-            // `json1.type.compose` only accepts (op1, op2). Without the
-            // wrapper TS rejects the signature mismatch.
-            // `compose` returns JSONOp (= null | JSONOpList); when the cache
-            // contains at least one op the result is the composed list,
-            // never null. The reduce above runs only when _operationCache is
-            // non-empty (guarded by the requestAnimationFrame in
-            // `_emitStateChange`), and a non-empty cache always composes to
-            // a non-null op.
-            const op = this._operationCache.reduce(
-                (acc, curr) => json1.type.compose(acc, curr) as JSONOpList,
-            );
-            const prevDoc = this.getState();
-            this.apply(op);
-            // TODO: remove doc in future
-            const doc = this.getState();
-            this.muya.eventCenter.emit('json-change', {
-                op,
-                source: 'user',
-                prevDoc,
-                doc,
-            });
-            this._operationCache = [];
-            this._isGoing = false;
+        this._rafHandle = requestAnimationFrame(() => {
+            this._rafHandle = null;
+            this._commitOperationCache();
         });
+    }
+
+    // Compose the batched operations, apply them to `_state`, and emit the
+    // coalesced `json-change`. Shared by the rAF callback in
+    // `_emitStateChange` and the synchronous `flush` below.
+    private _commitOperationCache() {
+        if (this._operationCache.length === 0) {
+            this._isGoing = false;
+            return;
+        }
+
+        // Wrap compose in a lambda — `Array.prototype.reduce` passes
+        // (acc, current, index, array) to the callback, but
+        // `json1.type.compose` only accepts (op1, op2). Without the
+        // wrapper TS rejects the signature mismatch.
+        // `compose` returns JSONOp (= null | JSONOpList); when the cache
+        // contains at least one op the result is the composed list,
+        // never null. We only reach here with a non-empty cache (guarded
+        // above), and a non-empty cache always composes to a non-null op.
+        const op = this._operationCache.reduce(
+            (acc, curr) => json1.type.compose(acc, curr) as JSONOpList,
+        );
+        const prevDoc = this.getState();
+        this.apply(op);
+        // TODO: remove doc in future
+        const doc = this.getState();
+        this.muya.eventCenter.emit('json-change', {
+            op,
+            source: 'user',
+            prevDoc,
+            doc,
+        });
+        this._operationCache = [];
+        this._isGoing = false;
+    }
+
+    /**
+     * Synchronously apply and emit any operations still batched for the next
+     * animation frame. Inline text edits are coalesced via
+     * `requestAnimationFrame` (see `_emitStateChange`), so `getState()` /
+     * `getMarkdown()` lag behind the live block tree until that frame runs.
+     * Callers that need an authoritative, up-to-date snapshot right now — e.g.
+     * serializing to markdown when switching into source-code mode — must
+     * flush first, otherwise they read the pre-edit document.
+     */
+    flush() {
+        if (this._rafHandle != null) {
+            cancelAnimationFrame(this._rafHandle);
+            this._rafHandle = null;
+        }
+        this._commitOperationCache();
     }
 }
 

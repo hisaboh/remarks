@@ -179,6 +179,16 @@ export class Muya {
     }
 
     /**
+     * Synchronously commit any document edits still batched for the next
+     * animation frame, so a subsequent `getMarkdown()` / `getState()` reflects
+     * the latest typing. Use before reading an authoritative snapshot (e.g.
+     * switching to source-code mode immediately after a keystroke).
+     */
+    flushPendingChanges() {
+        this.editor.jsonState.flush();
+    }
+
+    /**
      * Return a flat table of contents for the current document.
      *
      * Mirrors marktext's `tocCtrl.getTOC` (including the 9cb2cbe8 regex

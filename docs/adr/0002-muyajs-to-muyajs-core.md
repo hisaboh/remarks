@@ -85,6 +85,15 @@
     CommonMark 準拠スイートはデフォルト OFF で維持)
   - コードフェンス info string の完全往復(`meta.info` — pandoc 属性等を保持)
   - WKWebView 対応(IME keyCode 229 ガード、Shift+Arrow 境界クロス)
+  - **保留中編集の同期フラッシュ API**(`Muya.flushPendingChanges()` /
+    `JSONState.flush()`)。muya はインライン編集を `requestAnimationFrame` で
+    次フレームまでバッチ(`_emitStateChange`)するため、入力直後にソースコード
+    モードへ切り替えると `getMarkdown()` / `currentFile.markdown` が編集前の
+    状態のまま読まれ、入力が消えていた(#8)。desktop はソースモード切替の
+    `flush:'sync'` watch でこの API を呼び、保留 op を同期確定 + `json-change`
+    発火させてから sourceCode.vue をマウントする。
+    回帰: `packages/desktop/test/e2e/issue-8-source-mode.spec.ts`(rAF を凍結して
+    レースを決定論的に再現)。
 - Shift+Arrow の列位置は折り返し行ではブロック端への近似(非折り返し行では正確)。
 
 ## 参照

@@ -756,6 +756,15 @@ watch(
   (value, oldValue) => {
     if (value && value !== oldValue) {
       if (editor.value) {
+        // Inline text edits are coalesced to the next animation frame inside
+        // the engine (muya JSONState `_emitStateChange`), so `currentFile`'s
+        // markdown — refreshed only from the `json-change` listener — still
+        // holds the PRE-edit document when source mode is entered right after
+        // typing. Flush synchronously here (this watch is `flush: 'sync'`, so
+        // it runs before the `v-if`-gated sourceCode.vue mounts and reads
+        // `props.markdown`) to commit those edits and emit `json-change` now,
+        // keeping the just-typed content from disappearing (issue #8).
+        editor.value.flushPendingChanges()
         editor.value.hideAllFloatTools()
         // Compute the WYSIWYG caret as a source-markdown `{ line, ch }` index
         // cursor JUST-IN-TIME, only when entering source mode (Phase G — G7),
