@@ -220,7 +220,31 @@ export class Editor {
     }
 
     focus() {
-    // TODO: the cursor maybe passed by muya options.cursor, and no need to find the first leaf block.
+        // Restore the previous selection when one exists — command flows
+        // (e.g. the desktop's focusEditorAndExecute) call focus() right
+        // before applying an action, and resetting to the first block would
+        // retarget that action at the document start (hisaboh/remarks#2).
+        const { anchorBlock, focusBlock, anchor, focus } = this.selection;
+        if (
+            anchorBlock
+            && focusBlock
+            && anchor
+            && focus
+            && anchorBlock.domNode?.isConnected
+            && focusBlock.domNode?.isConnected
+        ) {
+            this.selection.setSelection({
+                anchor,
+                focus,
+                anchorBlock,
+                anchorPath: anchorBlock.path,
+                focusBlock,
+                focusPath: focusBlock.path,
+            });
+            return;
+        }
+
+        // Fresh editor: place the caret at the first leaf block.
         const firstLeafBlock = this.scrollPage?.firstContentInDescendant();
 
         if (firstLeafBlock == null)
