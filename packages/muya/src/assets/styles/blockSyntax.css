@@ -382,6 +382,12 @@ ul.mu-bullet-list {
     list-style: disc outside none;
 }
 
+/* nested lists carry no vertical margin (muyajs `li > ol, li > ul`) */
+li > ol.mu-order-list,
+li > ul.mu-bullet-list {
+    margin: 0;
+}
+
 /* list markers — default to `inherit` (current text color) so the bundled
    light theme is unchanged; themes can recolor the bullets / numbers. */
 ol.mu-order-list > li::marker,
@@ -397,6 +403,20 @@ ol.mu-order-list:first-child {
 ul.mu-bullet-list:last-child,
 ol.mu-order-list:last-child {
     margin-bottom: 0;
+}
+
+/* nested bullet markers follow the browser default cascade
+   (disc → circle → square), matching muyajs */
+ul.mu-bullet-list ul.mu-bullet-list,
+ol.mu-order-list ul.mu-bullet-list {
+    list-style-type: circle;
+}
+
+ul.mu-bullet-list ul.mu-bullet-list ul.mu-bullet-list,
+ul.mu-bullet-list ol.mu-order-list ul.mu-bullet-list,
+ol.mu-order-list ul.mu-bullet-list ul.mu-bullet-list,
+ol.mu-order-list ol.mu-order-list ul.mu-bullet-list {
+    list-style-type: square;
 }
 
 /* Focus mode (mirrors marktext muyajs `.ag-focus-mode`): when the editor
