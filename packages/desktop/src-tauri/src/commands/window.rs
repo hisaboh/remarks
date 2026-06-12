@@ -11,7 +11,7 @@
 //! by window label) and the renderer applies them via history.replaceState.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use serde_json::Value;
@@ -35,6 +35,10 @@ pub struct WindowRegistry {
     /// Labels confirmed to close — the CloseRequested handler lets these through
     /// instead of re-running the unsaved-changes prompt.
     closing: Mutex<HashSet<String>>,
+    /// True while an app-wide quit is in progress: each window runs its
+    /// unsaved-changes flow, and the last window's `Destroyed` event exits the
+    /// process. Cleared if any window cancels its close (quit aborted).
+    quitting: AtomicBool,
 }
 
 impl WindowRegistry {
@@ -45,6 +49,14 @@ impl WindowRegistry {
     /// Returns true (and clears the flag) if `label` was marked for closing.
     pub fn take_closing(&self, label: &str) -> bool {
         self.closing.lock().unwrap().remove(label)
+    }
+
+    pub fn set_quitting(&self, value: bool) {
+        self.quitting.store(value, Ordering::SeqCst);
+    }
+
+    pub fn is_quitting(&self) -> bool {
+        self.quitting.load(Ordering::SeqCst)
     }
 }
 
@@ -220,6 +232,35 @@ pub fn window_request_close(window: WebviewWindow) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// `mt::app-try-quit` — quit the whole app (Cmd/Ctrl+Q, App menu → Quit).
+///
+/// Ports Electron's quit-with-unsaved-changes flow: mark the app as quitting,
+/// then run each window's close flow. Editor windows go through the
+/// `mt::ask-for-close` prompt (so unsaved documents are not lost); the settings
+/// window has no documents and is closed directly. When the last window's
+/// `Destroyed` fires (see lib.rs) the process exits. If a window cancels its
+/// close, the quit is aborted (`set_quitting(false)` in `window_close_confirm`).
+#[tauri::command]
+pub fn app_try_quit(app: AppHandle) {
+    let registry = app.state::<WindowRegistry>();
+    registry.set_quitting(true);
+
+    let windows = app.webview_windows();
+    if windows.is_empty() {
+        app.exit(0);
+        return;
+    }
+
+    for (label, window) in windows {
+        if label == "settings" {
+            // No documents to save — close directly.
+            mark_and_close(&app, &window);
+        } else if let Err(e) = window.emit_to(window.label(), "mt::ask-for-close", ()) {
+            log::error!("app_try_quit: ask-for-close failed for {label}: {e}");
+        }
+    }
+}
+
 /// `mt::window-toggle-always-on-top` — flip the window's always-on-top state
 /// and reflect it on the Window-menu check item.
 #[tauri::command]
@@ -280,7 +321,11 @@ pub fn window_close_confirm(app: AppHandle, window: WebviewWindow, unsaved_files
                 crate::commands::files::save_unsaved_and_close(app_cb, window, unsaved_files);
             } else if dont_save {
                 mark_and_close(&app_cb, &window);
+            } else {
+                // Cancel / dismissed → keep the window open and abort any
+                // in-progress app quit (otherwise a later last-window close
+                // would unexpectedly exit the process).
+                app_cb.state::<WindowRegistry>().set_quitting(false);
             }
-            // Cancel / dismissed → keep the window open.
         });
 }

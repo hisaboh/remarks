@@ -45,6 +45,23 @@ pub fn run() {
                     *theme == tauri::Theme::Dark,
                 );
             }
+            // App-wide quit (Cmd/Ctrl+Q): app_try_quit marks the registry as
+            // quitting and runs every window's close flow. The last window to be
+            // destroyed exits the process — on macOS, closing all windows would
+            // otherwise leave the app running.
+            if let WindowEvent::Destroyed = event {
+                let app = window.app_handle();
+                let registry = app.state::<WindowRegistry>();
+                // The just-destroyed window may still appear in `webview_windows()`
+                // at this point, so exit once no OTHER window remains.
+                let others_remain = app
+                    .webview_windows()
+                    .keys()
+                    .any(|label| label != window.label());
+                if registry.is_quitting() && !others_remain {
+                    app.exit(0);
+                }
+            }
         })
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -130,6 +147,7 @@ pub fn run() {
             commands::window::window_request_close,
             commands::window::window_close,
             commands::window::window_close_confirm,
+            commands::window::app_try_quit,
             // context menu (Phase 4)
             commands::context_menu::menu_popup,
             commands::context_menu::menu_popup_application,

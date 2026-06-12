@@ -28,6 +28,9 @@ use tauri_plugin_store::StoreExt;
 /// renderer command).
 pub const PREFERENCES_ID: &str = "app.preferences";
 pub const CHECK_UPDATES_ID: &str = "app.check-updates";
+/// App menu → Quit. Routed through `app_try_quit` (not `PredefinedMenuItem::quit`)
+/// so a menu-click runs the same unsaved-changes flow as the Cmd/Ctrl+Q shortcut.
+pub const QUIT_ID: &str = "app.quit";
 
 const LINE_ENDING_CRLF_ID: &str = "file.line-ending-crlf";
 const LINE_ENDING_LF_ID: &str = "file.line-ending-lf";
@@ -406,7 +409,7 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&PredefinedMenuItem::hide_others(app, Some(&tr.t("menu.marktext.hideOthers")))?)
         .item(&PredefinedMenuItem::show_all(app, Some(&tr.t("menu.marktext.showAll")))?)
         .separator()
-        .item(&PredefinedMenuItem::quit(app, Some(&tr.t("menu.marktext.quit")))?)
+        .item(&cmd(app, QUIT_ID, &tr.t("menu.marktext.quit"), Some("CmdOrCtrl+Q"))?)
         .build()?;
 
     // Radio-like line-ending submenu (state synced via menu_update_line_ending).
@@ -715,6 +718,10 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         if let Some(window) = focused_window(app) {
             crate::commands::updater::check_for_updates(app, &window);
         }
+        return;
+    }
+    if id == QUIT_ID {
+        crate::commands::window::app_try_quit(app.clone());
         return;
     }
     // Recently-used documents (4g): clear, or open the path encoded in the id.

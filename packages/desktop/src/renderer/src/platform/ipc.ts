@@ -103,6 +103,8 @@ const SEND_MAP: Record<string, CmdSpec> = {
   'mt::cmd-close-window': { command: 'window_request_close' },
   'mt::close-window': { command: 'window_close' },
   'mt::close-window-confirm': { command: 'window_close_confirm', params: ['unsavedFiles'] },
+  // App-wide quit (Cmd/Ctrl+Q, App menu → Quit). Runs each window's close flow.
+  'mt::app-try-quit': { command: 'app_try_quit' },
   // Menu checkbox/radio state sync (Phase 4a). First arg is the windowId, which
   // the single global macOS menu ignores — '_wid' is a throwaway param name.
   'mt::update-format-menu': { command: 'menu_update_format', params: ['_wid', 'formats'] },
