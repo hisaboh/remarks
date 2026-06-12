@@ -15,7 +15,7 @@ import History from '../history';
 import InlineRenderer from '../inlineRenderer';
 import { Search } from '../search';
 import Selection from '../selection';
-import { getNodeAndOffset } from '../selection/dom';
+import { findContentDOM, getNodeAndOffset, getOffsetOfParagraph } from '../selection/dom';
 import JSONState from '../state';
 import { hasPick, isHTMLElement, isKeyboardEvent } from '../utils';
 import { getBlock } from '../utils/dom';
@@ -25,6 +25,32 @@ import { attachLinkMouseHandlers } from './linkMouseEvents';
 import TableCellSelection from './tableCellSelection';
 
 const debug = logger('editor:');
+
+/**
+ * Resolve the caret position at a viewport point. WebKit/Chromium expose
+ * `caretRangeFromPoint`; Firefox the standardized `caretPositionFromPoint`.
+ */
+function caretPositionAt(x: number, y: number): { node: Node; offset: number } | null {
+    const doc = document as Document & {
+        caretRangeFromPoint?: (x: number, y: number) => Range | null;
+        caretPositionFromPoint?: (
+            x: number,
+            y: number,
+        ) => { offsetNode: Node; offset: number } | null;
+    };
+    if (typeof doc.caretRangeFromPoint === 'function') {
+        const range = doc.caretRangeFromPoint(x, y);
+
+        return range ? { node: range.startContainer, offset: range.startOffset } : null;
+    }
+    if (typeof doc.caretPositionFromPoint === 'function') {
+        const pos = doc.caretPositionFromPoint(x, y);
+
+        return pos ? { node: pos.offsetNode, offset: pos.offset } : null;
+    }
+
+    return null;
+}
 
 export class Editor {
     jsonState: JSONState;
@@ -87,13 +113,12 @@ export class Editor {
     }
 
     /**
-     * Extend a Shift+ArrowUp/Down selection across block boundaries. WebKit
-     * cannot move the selection focus vertically out of a block wrapper —
-     * Shift+Down on a block's last visual line clamps to the line end instead
-     * of reaching the next block, so the line terminator never makes it into
-     * a selection (and copies of "a whole line" lose their newline). When the
-     * focus edge sits on the boundary line, move it into the neighbor block
-     * ourselves. Returns true when the event was handled.
+     * Extend a Shift+ArrowUp/Down selection vertically. WKWebView cannot move
+     * the selection focus vertically itself — neither across block wrappers
+     * nor across soft-wrapped lines inside one block (hisaboh/remarks#1), so
+     * Shift+Down either clamps at the line end or does nothing at all. Probe
+     * the adjacent visual line at the caret's x position and move the focus
+     * there ourselves. Returns true when the event was handled.
      */
     private _extendSelectionAcrossBlocks(event: Event): boolean {
         if (!isKeyboardEvent(event) || !event.shiftKey)
@@ -121,16 +146,46 @@ export class Editor {
         if (!coords)
             return false;
 
-        const { height, top } = focusBlock.domNode.getBoundingClientRect();
         const lineHeight = Number.parseFloat(
             getComputedStyle(focusBlock.domNode).lineHeight,
         );
+        if (!Number.isFinite(lineHeight) || lineHeight <= 0)
+            return false;
+
+        // Probe the middle of the adjacent visual line at the caret's x.
+        // Handles soft-wrapped lines and block boundaries alike, with the
+        // column preserved by geometry.
+        const probed = caretPositionAt(
+            coords.x,
+            coords.y + (isDown ? 1.5 : -0.5) * lineHeight,
+        );
+        if (probed) {
+            const probedContentDom = findContentDOM(probed.node);
+            if (probedContentDom) {
+                const probedOffset
+                    = getOffsetOfParagraph(probed.node, probedContentDom as HTMLElement)
+                        + probed.offset;
+                const isSamePosition
+                    = probedContentDom === focusBlock.domNode
+                        && probedOffset === focus.offset;
+                if (!isSamePosition) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    domSelection.extend(probed.node, probed.offset);
+
+                    return true;
+                }
+            }
+        }
+
+        // The probe missed (block margins, document edges): fall back to the
+        // block-edge walk when the focus sits on the block's boundary line.
+        const { height, top } = focusBlock.domNode.getBoundingClientRect();
         const topOffset = Math.floor((coords.y - top) / lineHeight);
         const bottomOffset = Math.round(
             (top + height - lineHeight - coords.y) / lineHeight,
         );
 
-        // Not on the boundary line — the native selection handles it.
         if (isDown ? bottomOffset > 0 : topOffset > 0)
             return false;
 
