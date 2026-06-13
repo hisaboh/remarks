@@ -13,7 +13,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api"] }
+# `devtools` keeps the webview devtools API (open/close/inspect) available in
+# release builds too, not just debug — the View menu exposes it in all builds.
+tauri = { version = "2", features = ["macos-private-api", "devtools"] }
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"

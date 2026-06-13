@@ -664,23 +664,22 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&cmd(app, "view.reload-images", &tr.t("menu.view.reloadImages"), Some("CmdOrCtrl+R"))?)
         .build()?;
 
-    // Dev-only entries, like Electron's MARKTEXT_DEBUG block. The devtools
-    // APIs only exist in debug builds (or with the `devtools` feature).
-    if cfg!(debug_assertions) {
-        view_menu.append(&PredefinedMenuItem::separator(app)?)?;
-        view_menu.append(&cmd(
-            app,
-            DEVTOOLS_ID,
-            &tr.t("menu.view.showDeveloperTools"),
-            Some("CmdOrCtrl+Alt+I"),
-        )?)?;
-        view_menu.append(&cmd(
-            app,
-            DEV_RELOAD_ID,
-            &tr.t("menu.view.reloadWindow"),
-            Some("CmdOrCtrl+Alt+R"),
-        )?)?;
-    }
+    // Developer tools + window reload. Shown in every build (the `devtools`
+    // Cargo feature keeps the webview devtools API available in release too),
+    // so testers on the -dev release channel can inspect / reload.
+    view_menu.append(&PredefinedMenuItem::separator(app)?)?;
+    view_menu.append(&cmd(
+        app,
+        DEVTOOLS_ID,
+        &tr.t("menu.view.showDeveloperTools"),
+        Some("CmdOrCtrl+Alt+I"),
+    )?)?;
+    view_menu.append(&cmd(
+        app,
+        DEV_RELOAD_ID,
+        &tr.t("menu.view.reloadWindow"),
+        Some("CmdOrCtrl+Alt+R"),
+    )?)?;
 
     let window_menu = SubmenuBuilder::new(app, &tr.t("menu.window.window"))
         .item(&PredefinedMenuItem::minimize(app, Some(&tr.t("menu.window.minimize")))?)
@@ -799,8 +798,8 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         crate::commands::context_menu::route_popup_click(app, id);
         return;
     }
-    // Dev-only entries (the menu items only exist in debug builds).
-    #[cfg(debug_assertions)]
+    // Developer tools + window reload (available in every build via the
+    // `devtools` Cargo feature).
     {
         if id == DEVTOOLS_ID {
             if let Some(window) = focused_window(app) {
