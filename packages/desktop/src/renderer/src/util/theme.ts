@@ -294,17 +294,21 @@ export interface CustomStyleOptions {
 
 export const addCustomStyle = (options: CustomStyleOptions): void => {
   const { customCss } = options
-  if (!customCss) return
 
   let customStyleEle = document.querySelector('#custom-styles') as HTMLStyleElement | null
   if (!customStyleEle) {
+    // Nothing applied yet and nothing to apply → no-op.
+    if (!customCss) return
     customStyleEle = document.createElement('style')
     customStyleEle.id = 'custom-styles'
   }
   // Always (re-)append: the element must sit after the theme/common sheets
   // in <head> so the user's CSS wins the cascade.
   document.head.appendChild(customStyleEle)
-  customStyleEle.innerHTML = customCss
+  // Set unconditionally so editing the field down to empty clears the
+  // previously-applied CSS instead of leaving it stale (otherwise removed/
+  // cleared custom CSS was never reflected).
+  customStyleEle.innerHTML = customCss ?? ''
 }
 
 export interface AddStylesOptions extends CommonStyleOptions {
