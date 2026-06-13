@@ -33,9 +33,13 @@ const preferencesStore = usePreferencesStore()
 const { theme, titleBarStyle } = storeToRefs(preferencesStore)
 
 const showCustomTitleBar = computed<boolean>(() => {
-  // Always show the custom title bar on macOS to provide a close button
+  // On macOS the window keeps its native traffic-light controls (top-left)
+  // because the settings window is built with `TitleBarStyle::Overlay` +
+  // decorations, so the custom title bar's close button (top-right) would be
+  // a redundant second close button. Fall back to the plain drag-region title
+  // bar there and let the native controls handle closing.
   if (isOsx) {
-    return true
+    return false
   }
   return titleBarStyle.value === 'custom'
 })
