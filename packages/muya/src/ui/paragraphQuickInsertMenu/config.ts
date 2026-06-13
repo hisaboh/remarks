@@ -491,8 +491,23 @@ export function replaceBlockByLabel({ block, muya, label, text = '' }: {
             // fall through
         case 'block-quote': {
             const cloned = deepClone(emptyStates[label]);
-            if (cloned.name === 'paragraph') {
+            if (
+                cloned.name === 'paragraph'
+                || cloned.name === 'math-block'
+                || cloned.name === 'code-block'
+            ) {
+                // Carry the source paragraph's text into the new block. Code
+                // and math blocks store their body in `text`, so converting a
+                // non-empty paragraph must seed it here — previously only
+                // `paragraph` did, which silently dropped the text (#7).
                 cloned.text = text;
+            }
+            else if (cloned.name === 'html-block') {
+                // Mirror legacy muyajs `initHtmlBlock`: wrap the paragraph text
+                // in a <div>. With no text, keep the empty-state placeholder
+                // (`<div>\n\n</div>`) so the cursor lands inside an empty block.
+                if (text)
+                    cloned.text = `<div>\n${text}\n</div>`;
             }
             else if (cloned.name === 'block-quote') {
                 const inner = cloned.children[0];
@@ -597,8 +612,10 @@ export function replaceBlockByLabel({ block, muya, label, text = '' }: {
     }
     else {
         cursorBlock = newBlock.firstContentInDescendant();
-        // Set the cursor between <div>\n\n</div> when create html-block
-        const offset = label === 'html-block' ? 6 : cursorBlock.text.length;
+        // For html-block the cursor sits just after the opening `<div>\n`
+        // (6 chars); when seeded with text, advance past it so the caret lands
+        // at the end of the carried-over content rather than before it.
+        const offset = label === 'html-block' ? 6 + text.length : cursorBlock.text.length;
         cursorBlock.setCursor(offset, offset, true);
     }
 }

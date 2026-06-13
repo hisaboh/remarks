@@ -679,9 +679,17 @@ export class Muya {
             children: Array.from({ length: safeRows }, makeRow),
         };
 
+        // Carry the replaced block's text into the first header cell so
+        // converting a non-empty paragraph to a table no longer drops it (#7).
+        // Empty blocks leave the cell empty, as before.
+        const leadingText = this._blockLeadingText(block);
+        if (leadingText)
+            state.children[0].children[0].text = leadingText;
+
         const newTable = ScrollPage.loadBlock('table').create(this, state);
         block.replaceWith(newTable);
-        newTable.firstContentInDescendant()?.setCursor(0, 0, true);
+        const firstCell = newTable.firstContentInDescendant();
+        firstCell?.setCursor(leadingText.length, leadingText.length, true);
     }
 
     /**
