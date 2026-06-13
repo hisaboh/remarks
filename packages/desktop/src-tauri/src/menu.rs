@@ -13,7 +13,7 @@
 //! single global menu, so one registry covers all windows; per-window menu
 //! variation and focus-driven re-sync are still later tasks.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -162,6 +162,12 @@ const FORMAT_MAP: &[(&str, &str)] = &[
 pub struct MenuState {
     checks: Mutex<HashMap<String, CheckMenuItem<tauri::Wry>>>,
     open_recent: Mutex<Option<Submenu<tauri::Wry>>>,
+    /// Effective `commandId → accelerator` map pushed by the renderer (the
+    /// keybinding system's merged defaults + user overrides). Used so the
+    /// native menu *displays* the accelerator that actually dispatches the
+    /// command, instead of an independently hardcoded one that could drift
+    /// (#5). Empty until the renderer sends it; survives `rebuild_menu`.
+    accelerators: Mutex<BTreeMap<String, String>>,
 }
 
 impl MenuState {
@@ -170,6 +176,22 @@ impl MenuState {
             .lock()
             .unwrap()
             .insert(item.id().as_ref().to_string(), item.clone());
+    }
+
+    /// Resolve the accelerator a menu item should display for `id`:
+    /// the renderer-provided binding (converted to Tauri syntax) when known,
+    /// an explicit unbind (empty string) → no accelerator, otherwise the
+    /// build-time `default`.
+    fn resolve_accel(&self, id: &str, default: Option<&str>) -> Option<String> {
+        match self.accelerators.lock().unwrap().get(id) {
+            Some(a) if a.trim().is_empty() => None,
+            Some(a) => Some(electron_to_tauri_accel(a)),
+            None => default.map(str::to_string),
+        }
+    }
+
+    fn set_accelerators(&self, map: BTreeMap<String, String>) {
+        *self.accelerators.lock().unwrap() = map;
     }
 
     fn set(&self, id: &str, checked: bool) {
@@ -364,17 +386,43 @@ fn nav(value: &serde_json::Value, key: &str) -> Option<String> {
     cur.as_str().map(str::to_owned)
 }
 
+/// Convert an Electron-style accelerator (the format the renderer keybinding
+/// system stores, e.g. `Command+Shift+N`, `Command+Option+C`) into the Tauri
+/// menu accelerator syntax used elsewhere in this file (`CmdOrCtrl+Shift+N`,
+/// `Alt`, …). Modifiers are normalised; the key token is left untouched.
+fn electron_to_tauri_accel(accel: &str) -> String {
+    accel
+        .split('+')
+        .map(|raw| {
+            let tok = raw.trim();
+            match tok.to_ascii_lowercase().as_str() {
+                "command" | "cmd" | "commandorcontrol" | "cmdorctrl" => "CmdOrCtrl",
+                "control" | "ctrl" => "Ctrl",
+                "option" | "alt" => "Alt",
+                "shift" => "Shift",
+                "super" | "meta" => "Super",
+                _ => tok,
+            }
+            .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 fn cmd(
     app: &AppHandle,
     id: &str,
     label: &str,
     accel: Option<&str>,
 ) -> tauri::Result<tauri::menu::MenuItem<tauri::Wry>> {
-    let mut builder = MenuItemBuilder::with_id(id, label);
-    if let Some(a) = accel {
-        builder = builder.accelerator(a);
+    let resolved = app.state::<MenuState>().resolve_accel(id, accel);
+    if let Some(a) = &resolved {
+        match MenuItemBuilder::with_id(id, label).accelerator(a).build(app) {
+            Ok(item) => return Ok(item),
+            Err(e) => log::warn!("menu: invalid accelerator {a:?} for {id}: {e}; omitting"),
+        }
     }
-    builder.build(app)
+    MenuItemBuilder::with_id(id, label).build(app)
 }
 
 /// Build a checkable item and register it in [`MenuState`] (managed before
@@ -385,11 +433,18 @@ fn check(
     label: &str,
     accel: Option<&str>,
 ) -> tauri::Result<CheckMenuItem<tauri::Wry>> {
-    let mut builder = CheckMenuItemBuilder::with_id(id, label).checked(false);
-    if let Some(a) = accel {
-        builder = builder.accelerator(a);
-    }
-    let item = builder.build(app)?;
+    let resolved = app.state::<MenuState>().resolve_accel(id, accel);
+    let item = match resolved
+        .as_deref()
+        .map(|a| CheckMenuItemBuilder::with_id(id, label).checked(false).accelerator(a).build(app))
+    {
+        Some(Ok(item)) => item,
+        Some(Err(e)) => {
+            log::warn!("menu: invalid accelerator for {id}: {e}; omitting");
+            CheckMenuItemBuilder::with_id(id, label).checked(false).build(app)?
+        }
+        None => CheckMenuItemBuilder::with_id(id, label).checked(false).build(app)?,
+    };
     app.state::<MenuState>().register(&item);
     Ok(item)
 }
@@ -849,6 +904,17 @@ pub fn menu_update_paragraph(app: AppHandle, state: serde_json::Value) {
     menu_state.set("paragraph.loose-list-item", flag("isLooseListItem"));
 }
 
+/// `mt::set-menu-accelerators` — the renderer pushes its effective keybinding
+/// map (merged platform defaults + user overrides) so the native menu shows
+/// the accelerator that actually dispatches each command. Stored on
+/// [`MenuState`] and applied by rebuilding the menu. Sent once on startup and
+/// again whenever the user edits a keybinding (#5).
+#[tauri::command]
+pub fn menu_set_accelerators(app: AppHandle, accelerators: BTreeMap<String, String>) {
+    app.state::<MenuState>().set_accelerators(accelerators);
+    rebuild_menu(&app);
+}
+
 /// Set a registered check item from other modules (e.g. always-on-top).
 pub fn set_check(app: &AppHandle, id: &str, checked: bool) {
     app.state::<MenuState>().set(id, checked);
@@ -918,5 +984,27 @@ pub fn menu_update_view(app: AppHandle, changes: HashMap<String, serde_json::Val
             "focus" => state.set(FOCUS_ID, v),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::electron_to_tauri_accel;
+
+    #[test]
+    fn converts_renderer_modifiers_to_tauri_syntax() {
+        // The renderer keybinding maps store Electron-style accelerators; the
+        // menu needs Tauri syntax (Command->CmdOrCtrl, Option->Alt).
+        assert_eq!(electron_to_tauri_accel("Command+N"), "CmdOrCtrl+N");
+        assert_eq!(electron_to_tauri_accel("Shift+Command+N"), "Shift+CmdOrCtrl+N");
+        assert_eq!(electron_to_tauri_accel("Command+Option+C"), "CmdOrCtrl+Alt+C");
+        assert_eq!(electron_to_tauri_accel("Ctrl+Shift+T"), "Ctrl+Shift+T");
+    }
+
+    #[test]
+    fn leaves_key_tokens_untouched() {
+        assert_eq!(electron_to_tauri_accel("Command+Plus"), "CmdOrCtrl+Plus");
+        assert_eq!(electron_to_tauri_accel("Command+-"), "CmdOrCtrl+-");
+        assert_eq!(electron_to_tauri_accel("Command+1"), "CmdOrCtrl+1");
     }
 }

@@ -300,6 +300,10 @@ export const initPlatform = async (): Promise<void> => {
       userKeybindings: Map<string, string>
     }
     setUserKeybindings(userKeybindings)
+    // Push the effective accelerators so the native menu shows the shortcuts
+    // that actually dispatch (defaults + user overrides), not the menu's own
+    // hardcoded ones (#5).
+    send('mt::set-menu-accelerators', getKeybindingMap())
   } catch (err) {
     console.error('[platform] failed to load user keybindings:', err)
   }

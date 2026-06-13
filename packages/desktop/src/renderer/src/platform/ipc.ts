@@ -11,7 +11,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { BootInfo } from '@shared/types/ipc'
-import { getDefaultKeybindingMap, setUserKeybindings } from '../keybinding'
+import { getDefaultKeybindingMap, getKeybindingMap, setUserKeybindings } from '../keybinding'
 
 interface CmdSpec {
   command: string
@@ -124,7 +124,10 @@ const SEND_MAP: Record<string, CmdSpec> = {
   // Auto-updater (Phase 6): check → mt::UPDATE_* events back; NEED_UPDATE is
   // the user's answer to the UPDATE_AVAILABLE notification ({ needUpdate }).
   'mt::check-for-update': { command: 'updater_check' },
-  'mt::NEED_UPDATE': { command: 'updater_need_update', params: ['payload'] }
+  'mt::NEED_UPDATE': { command: 'updater_need_update', params: ['payload'] },
+  // Push the effective keybinding map so the native menu displays the
+  // accelerators that actually dispatch each command (#5).
+  'mt::set-menu-accelerators': { command: 'menu_set_accelerators', params: ['accelerators'] }
 }
 
 // Built-in Tauri window controls — handled without a custom Rust command.
@@ -191,7 +194,14 @@ export const invoke = (channel: string, ...args: unknown[]): Promise<unknown> =>
     const bindings = Object.fromEntries(map)
     return tauriInvoke('keybindings_save_user', { bindings }).then((ok) => {
       // Apply live so customizations take effect without a restart.
-      if (ok) setUserKeybindings(new Map(map))
+      if (ok) {
+        setUserKeybindings(new Map(map))
+        // Refresh the native menu accelerators so the displayed shortcuts
+        // match the new bindings (#5).
+        tauriInvoke('menu_set_accelerators', { accelerators: getKeybindingMap() }).catch((err) =>
+          console.error('[platform] menu_set_accelerators failed:', err)
+        )
+      }
       return ok
     })
   }
