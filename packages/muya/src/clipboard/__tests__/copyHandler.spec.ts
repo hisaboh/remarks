@@ -1,5 +1,6 @@
 import type { Muya } from '../../muya';
 import { describe, expect, it, vi } from 'vitest';
+import { CopyType } from '../types';
 
 // The clipboard module pulls in CodeBlockContent → utils/prism which touches
 // `window` at import time. Stub the prism shim so the test can run under Node.
@@ -49,19 +50,23 @@ describe('clipboard.copyHandler — skip empty clipboard writes', () => {
         expect(setData).not.toHaveBeenCalled();
     });
 
-    it('normal copy: writes both formats when text is non-empty', () => {
+    it('normal copy: writes markdown source to text/plain and blanks text/html', () => {
+        // Track B / D1: a `normal` copy writes ONLY the markdown source to
+        // text/plain and blanks text/html (legacy `copyCutCtrl.copyHandler`),
+        // so an external paste lands as markdown and an internal copy → paste
+        // round-trips through the markdown branch losslessly.
         const clipboard = makeClipboard('<p>hi</p>', 'hi');
         const { event, setData } = makeEvent();
 
         clipboard.copyHandler(event);
 
-        expect(setData).toHaveBeenCalledWith('text/html', '<p>hi</p>');
+        expect(setData).toHaveBeenCalledWith('text/html', '');
         expect(setData).toHaveBeenCalledWith('text/plain', 'hi');
     });
 
     it('copyAsMarkdown: does not call setData when text is empty', () => {
         const clipboard = makeClipboard('', '');
-        clipboard.copyType = 'copyAsMarkdown';
+        clipboard.copyType = CopyType.COPY_AS_MARKDOWN;
         const { event, setData } = makeEvent();
 
         clipboard.copyHandler(event);
@@ -71,7 +76,7 @@ describe('clipboard.copyHandler — skip empty clipboard writes', () => {
 
     it('copyAsHtml: does not call setData when html is empty', () => {
         const clipboard = makeClipboard('', '');
-        clipboard.copyType = 'copyAsHtml';
+        clipboard.copyType = CopyType.COPY_AS_HTML;
         const { event, setData } = makeEvent();
 
         clipboard.copyHandler(event);
@@ -81,7 +86,7 @@ describe('clipboard.copyHandler — skip empty clipboard writes', () => {
 
     it('copyCodeContent: does not call setData when copyInfo is empty', () => {
         const clipboard = new Clipboard({} as Muya);
-        clipboard.copyType = 'copyCodeContent';
+        clipboard.copyType = CopyType.COPY_CODE_CONTENT;
         clipboard.copyInfo = '';
         const { event, setData } = makeEvent();
 
@@ -92,7 +97,7 @@ describe('clipboard.copyHandler — skip empty clipboard writes', () => {
 
     it('copyCodeContent: writes plain text when copyInfo is non-empty', () => {
         const clipboard = new Clipboard({} as Muya);
-        clipboard.copyType = 'copyCodeContent';
+        clipboard.copyType = CopyType.COPY_CODE_CONTENT;
         clipboard.copyInfo = 'console.log("x")';
         const { event, setData } = makeEvent();
 

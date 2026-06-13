@@ -5,6 +5,7 @@ import type { Nullable } from '../../../types';
 import type CodeBlock from './index';
 import { fromEvent } from 'rxjs';
 import copyIcon from '../../../assets/icons/copy/2.png';
+import { CopyType } from '../../../clipboard/types';
 import { LINE_NUMBERS_ROWS_CLASS, lineNumbersWrapperHTML } from '../../../utils/codeBlockLineNumbers';
 import logger from '../../../utils/logger';
 import { h, toHTML } from '../../../utils/snabbdom';
@@ -71,6 +72,7 @@ class Code extends Parent {
         super(muya);
         this.tagName = 'code';
         this.classList = ['mu-code'];
+        this.attributes = { spellcheck: 'false' };
         this._withLineNumbers = withLineNumbers;
         this.createDomNode();
         this.createCopyNode();
@@ -117,7 +119,7 @@ class Code extends Parent {
                 return;
             }
 
-            editor.clipboard.copy('copyCodeContent', codeContent.text);
+            editor.clipboard.copy(CopyType.COPY_CODE_CONTENT, codeContent.text);
         };
 
         const mousedownHandler = (event: Event) => {

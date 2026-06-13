@@ -37,8 +37,7 @@ const debug = logger('quickInsert:');
 
 /**
  * Derive the frontmatter `lang`/`style` from the user's `frontmatterType`
- * preference, mirroring legacy muyajs `handleFrontMatter`
- * (contentState/paragraphCtrl.js): `-` -> yaml `---`, `+` -> toml `+++`,
+ * preference: `-` -> yaml `---`, `+` -> toml `+++`,
  * `;`/`{` -> json (`;;;`/`{}`). The serializer (`serializeFrontMatter`)
  * switches on `lang`, so getting `lang` right is what makes YAML/TOML emit
  * their fences instead of falling through to JSON braces.
@@ -58,21 +57,21 @@ export function frontmatterMeta(frontmatterType: string): IFrontmatterMeta {
 }
 
 /**
- * Prepend a front matter block at the very start of the document, mirroring
- * legacy muyajs `handleFrontMatter`. Front matter is only valid as the first
+ * Prepend a front matter block at the very start of the document. Front matter
+ * is only valid as the first
  * block, so this never replaces the block at the cursor. Idempotent: a no-op
  * when the document already starts with front matter, so it never duplicates
  * the block. Shared by `Muya.updateParagraph('front-matter')` and the
  * quick-insert menu's `frontmatter` entry so both follow identical semantics.
  */
-export function insertFrontMatterAtStart(muya: Muya) {
+export function insertFrontMatterAtStart(muya: Muya): boolean {
     const { scrollPage } = muya.editor;
     if (!scrollPage)
-        return;
+        return false;
 
     const firstBlock = scrollPage.firstChild as Parent | null;
     if (firstBlock?.blockName === 'frontmatter')
-        return;
+        return false;
 
     const fmState = deepClone(emptyStates.frontmatter);
     Object.assign(fmState.meta, frontmatterMeta(muya.options.frontmatterType));
@@ -80,6 +79,8 @@ export function insertFrontMatterAtStart(muya: Muya) {
     const frontmatter = ScrollPage.loadBlock('frontmatter').create(muya, fmState);
     scrollPage.insertBefore(frontmatter, firstBlock);
     frontmatter.firstContentInDescendant()?.setCursor(0, 0, true);
+
+    return true;
 }
 
 const COMMAND_KEY = isOsx ? '⌘' : 'Ctrl';
@@ -418,8 +419,7 @@ export function getLabelFromEvent(event: Event) {
 }
 
 /**
- * Show the in-editor table grid picker, porting legacy muyajs
- * `paragraphCtrl.showTablePicker`. The in-editor "table" insert (the `/`
+ * Show the in-editor table grid picker. The in-editor "table" insert (the `/`
  * quick-insert menu and the paragraph front-menu) must offer a hover-grid
  * dimension picker rather than dropping a fixed-size table — the picker UI
  * (`TableChessboard`) subscribes to `muya-table-picker` and invokes the
@@ -465,12 +465,24 @@ export function replaceBlockByLabel({ block, muya, label, text = '' }: {
     // `block.replaceWith` below — sharing the idempotent doc-start logic with
     // `Muya.updateParagraph('front-matter')`.
     if (label === 'frontmatter') {
-        insertFrontMatterAtStart(muya);
+        // Every other label drops the `/` quick-insert trigger text implicitly
+        // via `block.replaceWith(newBlock)`. Front matter is prepended at the
+        // document start instead (the trigger paragraph survives), so clear its
+        // `/…` text and refresh the DOM. Only do so when a block was actually
+        // inserted — when the document already starts with front matter the
+        // insert is a no-op and the trigger paragraph must be left untouched.
+        if (insertFrontMatterAtStart(muya)) {
+            const triggerContent = block.firstContentInDescendant();
+            if (triggerContent) {
+                triggerContent.text = '';
+                triggerContent.update();
+            }
+        }
         return;
     }
 
     // The in-editor "table" insert shows a hover-grid dimension picker
-    // (legacy muyajs `showTablePicker`) instead of dropping a fixed-size
+    // instead of dropping a fixed-size
     // table. The picker's callback creates the table at the chosen size, so
     // bail before the in-place empty-table replacement below.
     if (label === 'table') {

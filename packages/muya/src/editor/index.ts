@@ -10,7 +10,7 @@ import { fromEvent, merge } from 'rxjs';
 import { registerBlocks } from '../block';
 import { ScrollPage } from '../block/scrollPage';
 import Clipboard from '../clipboard';
-import { isFirefox } from '../config';
+import { CLASS_NAMES, isFirefox } from '../config';
 import History from '../history';
 import InlineRenderer from '../inlineRenderer';
 import { Search } from '../search';
@@ -22,7 +22,6 @@ import { getBlock } from '../utils/dom';
 import logger from '../utils/logger';
 import { attachDragDropImageHandlers } from './dragDropImage';
 import { attachLinkMouseHandlers } from './linkMouseEvents';
-import TableCellSelection from './tableCellSelection';
 
 const debug = logger('editor:');
 
@@ -59,7 +58,6 @@ export class Editor {
     searchModule: Search;
     clipboard: Clipboard;
     history: History;
-    tableSelection: TableCellSelection;
     scrollPage: Nullable<ScrollPage> = null;
 
     private _activeContentBlock: Nullable<Content> = null;
@@ -73,7 +71,6 @@ export class Editor {
         this.searchModule = new Search(muya);
         this.clipboard = Clipboard.create(muya);
         this.history = new History(muya);
-        this.tableSelection = TableCellSelection.create(muya);
     }
 
     get activeContentBlock() {
@@ -101,13 +98,13 @@ export class Editor {
         this.scrollPage = ScrollPage.create(muya, state);
 
         this._dispatchEvents();
-        // marktext cb25b3d4 (#1415): hovering a rendered link wrapper
-        // dispatches `muya-link-tools` so the staged popover lights up.
-        // Cleanup is handled by `muya.destroy()` → `detachAllDomEvents`.
+        // Hovering a rendered link wrapper dispatches `muya-link-tools` so the
+        // staged popover lights up. Cleanup is handled by `muya.destroy()` →
+        // `detachAllDomEvents`.
         attachLinkMouseHandlers(muya);
-        // marktext PG4 (#4406 follow-up): dropping an image file or web-link
-        // image into the editor inserts it as a new `![](src)` block. Cleanup
-        // is likewise handled by `detachAllDomEvents`.
+        // Dropping an image file or web-link image into the editor inserts it
+        // as a new `![](src)` block. Cleanup is likewise handled by
+        // `detachAllDomEvents`.
         attachDragDropImageHandlers(muya);
         this.focus();
     }
@@ -226,7 +223,7 @@ export class Editor {
                 && isFirefox
                 && isHTMLElement(event.target)
                 && event.target.textContent === ''
-                && event.target.classList.contains('mu-language-input')
+                && event.target.classList.contains(CLASS_NAMES.MU_LANGUAGE_INPUT)
             ) {
                 (getBlock(event.target) as Content | undefined)?.setCursor(0, 0, true);
                 return;

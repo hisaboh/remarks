@@ -115,6 +115,12 @@ export default class ExportMarkdown {
                     // runs round-trip without growing.
                     if (state.text === '') {
                         this.insertLineBreak(result, indent);
+                        // A leading/lone empty paragraph has no preceding block
+                        // to supply the separator newline, so emit it
+                        // explicitly — otherwise an emptied document would
+                        // serialize to '' instead of '\n'.
+                        if (result.length === 0)
+                            result.push(`${indent.replace(/ +$/, '')}\n`);
                         break;
                     }
                     this.insertLineBreak(result, indent);

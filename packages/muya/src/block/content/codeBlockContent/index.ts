@@ -10,7 +10,7 @@ import type Code from '../../commonMark/codeBlock/code';
 import type HTMLPreview from '../../commonMark/html/htmlPreview';
 import { HTML_TAGS, VOID_HTML_TAGS } from '../../../config';
 import { adjustOffset, escapeHTML } from '../../../utils';
-import { computeLineCount, syncLineNumbersSpans } from '../../../utils/codeBlockLineNumbers';
+import { computeLineCount, repositionLineNumberSpans, syncLineNumbersSpans } from '../../../utils/codeBlockLineNumbers';
 import { getHighlightHtml, MARKER_HASH } from '../../../utils/highlightHTML';
 import prism, { loadedLanguages, transformAliasToOrigin, walkTokens } from '../../../utils/prism/index';
 import Content from '../../base/content';
@@ -177,10 +177,16 @@ class CodeBlockContent extends Content {
         if (wrapper == null)
             return;
         const count = computeLineCount(text);
-        if (count === this._lastLineCount)
-            return;
-        syncLineNumbersSpans(wrapper, count);
-        this._lastLineCount = count;
+        if (count !== this._lastLineCount) {
+            syncLineNumbersSpans(wrapper, count);
+            this._lastLineCount = count;
+        }
+        // Reposition on every update so wrap-mode line breaks are reflected.
+        const codeEl = this.domNode;
+        requestAnimationFrame(() => {
+            if (codeEl && wrapper.isConnected)
+                repositionLineNumberSpans(wrapper, codeEl);
+        });
     }
 
     override inputHandler(event: Event): void {
