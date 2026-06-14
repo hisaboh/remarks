@@ -609,7 +609,6 @@ export const useEditorStore = defineStore('editor', {
 
     LISTEN_FOR_CLOSE(): void {
       const projectStore = useProjectStore()
-      const preferencesStore = usePreferencesStore()
       window.electron.ipcRenderer.on('mt::ask-for-close', () => {
         sendBufferedState()
           .catch((err) => {
@@ -631,8 +630,11 @@ export const useEditorStore = defineStore('editor', {
                 }
               })
 
-            if (unsavedFiles.length && preferencesStore.startUpAction !== 'restoreAll') {
-              // Ignore unsaved files when user has chosen to restore all on startup, as they will be restored anyway.
+            // Always prompt when there are unsaved changes — even with the
+            // `restoreAll` startup action. Silently quitting on Cmd+Q / window
+            // close surprised users (#10); session restore is a safety net, not
+            // a substitute for the Save / Don't Save / Cancel confirmation.
+            if (unsavedFiles.length) {
               window.electron.ipcRenderer.send('mt::close-window-confirm', deepClone(unsavedFiles))
             } else {
               window.electron.ipcRenderer.send('mt::close-window')
