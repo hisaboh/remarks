@@ -11,6 +11,12 @@ declare global {
         // non-desktop / headless contexts (the resolver then leaves relative
         // paths untouched rather than producing a broken `file://`).
         DIRNAME?: string;
+        // Host (desktop) file bridge. `loadPdfPage` reads PDF bytes through it
+        // so PDF.js never makes a (CSP-blocked) file:// fetch. Undefined in
+        // non-desktop / headless contexts.
+        fileUtils?: {
+            readFile: (path: string, encoding?: string) => Promise<Uint8Array | string>;
+        };
     }
 
     interface Element {

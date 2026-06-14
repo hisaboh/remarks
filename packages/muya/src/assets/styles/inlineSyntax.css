@@ -316,6 +316,20 @@ blockquote .mu-hide.mu-math > .mu-math-render {
     max-width: 100%;
 }
 
+/* PDF embed (`![](x.pdf)`): rasterised at high DPI, then laid out block-level
+   so the page fills the column width and the extra pixels are used for
+   sharpness rather than overflowing inline. */
+.mu-inline-image.mu-pdf-figure,
+.mu-inline-image.mu-pdf-figure .mu-image-container {
+    display: block;
+    width: 100%;
+}
+
+.mu-inline-image.mu-pdf-figure .mu-image-container img {
+    width: 100%;
+    height: auto;
+}
+
 .mu-inline-image.mu-image-success {
     background: transparent;
 }

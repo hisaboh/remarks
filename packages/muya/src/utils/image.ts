@@ -74,6 +74,25 @@ export function getImageSrc(src: string) {
         = /^https?:\/\/(?:[\w\-.~]+\.[a-z]{2,}|[0-9.]+|localhost|\[[a-f0-9.:]+\])(?::\d{1,5})?\/\S+/i;
     const DATA_URL_REG
         = /^data:image\/[\w+-]+(?:;[\w-]+=[\w-]+|;base64)*,[a-zA-Z0-9+/]+={0,2}$/;
+
+    // PDF (`![](x.pdf)`): not an `<img>` type, but resolve its path like a
+    // local image so `loadImageAsync` can rasterise it via PDF.js. Relative
+    // paths anchor to the document directory (`window.DIRNAME`).
+    if (/\.pdf(?=\?|$)/i.test(src)) {
+        if (URL_REG.test(src) || /^file:\/\//i.test(src))
+            return { isUnknownType: false, src };
+
+        const pdfBaseUrl = typeof window !== 'undefined' ? window.DIRNAME : undefined;
+        if (!ABSOLUTE_LOCAL_REG.test(src) && pdfBaseUrl) {
+            return {
+                isUnknownType: false,
+                src: `file://${resolveRelativePath(pdfBaseUrl, src)}`,
+            };
+        }
+
+        return { isUnknownType: false, src: `file://${src}` };
+    }
+
     const imageExtension = EXT_REG.test(src);
     // An already-`file://` src must not be re-prefixed (avoids `file://file://`).
     const isFileUrl = /^file:\/\//i.test(src);

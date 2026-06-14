@@ -32,6 +32,10 @@ export default function image(
     { h, block, token }: ISyntaxRenderOptions & { token: ImageToken },
 ) {
     const imageSrc = getImageSrc(token.attrs.src);
+    // PDFs are rasterised (PDF.js) and shown as a block-level figure; the
+    // `mu-pdf-figure` class must live on the vnode wrapper so it survives
+    // re-renders (loadImageAsync only injects the <img>).
+    const isPdf = /\.pdf(?=\?|$)/i.test(token.attrs.src);
     const selectedImage = this.muya.editor.selection.image;
     const { i18n } = this.muya;
     const data = {
@@ -89,6 +93,9 @@ export default function image(
 
     if (typeof token.attrs['data-align'] === 'string')
         wrapperSelector += `.${token.attrs['data-align']}`;
+
+    if (isPdf)
+        wrapperSelector += '.mu-pdf-figure';
 
     // the src image is still loading, so use the url Map base64.
     if (this.urlMap.has(src)) {

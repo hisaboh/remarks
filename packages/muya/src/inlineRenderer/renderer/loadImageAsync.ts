@@ -3,6 +3,69 @@ import { CLASS_NAMES } from '../../config';
 import { getUniqueId } from '../../utils';
 import { insertAfter, operateClassName } from '../../utils/dom';
 import { loadImage } from '../../utils/image';
+import { loadPdfPage } from './loadPdfPage';
+
+// `<img>` can't display a PDF, so `![](x.pdf)` is rasterised via PDF.js. This
+// runs the same async-load contract as a normal image (inject into the
+// container once ready, populate the caches keyed by src so re-renders reuse
+// the data URL) — see `loadImageAsync` below.
+function loadPdfAsync(
+    this: Renderer,
+    src: string,
+    id: string,
+    attrs: Record<string, string>,
+    className?: string,
+    imageClass?: string,
+) {
+    loadPdfPage(src)
+        .then(({ dataUrl, width, height }) => {
+            const imageText: HTMLElement | null = document.querySelector(`#${id}`);
+            const img = document.createElement('img');
+            img.src = dataUrl;
+            if (attrs.alt)
+                img.alt = attrs.alt.replace(/[`*{}[\]()#+\-.!_>~:|<$]/g, '');
+            if (attrs.title)
+                img.setAttribute('title', attrs.title);
+            if (imageClass)
+                img.classList.add(imageClass);
+
+            if (imageText) {
+                if (imageText.classList.contains(`${CLASS_NAMES.MU_INLINE_IMAGE}`)) {
+                    const imageContainer = imageText.querySelector(
+                        `.${CLASS_NAMES.MU_IMAGE_CONTAINER}`,
+                    );
+                    const oldImage = imageContainer!.querySelector('img');
+                    if (oldImage)
+                        oldImage.remove();
+
+                    imageContainer!.appendChild(img);
+                    imageText.classList.remove(CLASS_NAMES.MU_IMAGE_LOADING);
+                    imageText.classList.add(CLASS_NAMES.MU_IMAGE_SUCCESS);
+                }
+                else {
+                    insertAfter(img, imageText);
+                    if (className)
+                        operateClassName(imageText, 'add', className);
+                }
+            }
+
+            // Re-renders read the data URL from `urlMap` (see `image.ts`) so the
+            // snabbdom <img> shows the rasterised page rather than the file:// PDF.
+            this.urlMap.set(src, dataUrl);
+            this.loadImageMap.set(src, { id, isSuccess: true, url: dataUrl, width, height });
+        })
+        .catch(() => {
+            const imageText: HTMLElement | null = document.querySelector(`#${id}`);
+            if (imageText) {
+                operateClassName(imageText, 'remove', CLASS_NAMES.MU_IMAGE_LOADING);
+                operateClassName(imageText, 'add', CLASS_NAMES.MU_IMAGE_FAIL);
+                const image = imageText.querySelector('img');
+                if (image)
+                    image.remove();
+            }
+            this.loadImageMap.set(src, { id, isSuccess: false });
+        });
+}
 
 export default function loadImageAsync(
     this: Renderer,
@@ -26,6 +89,11 @@ export default function loadImageAsync(
     // permanently poison the cache (marktext#3001 / #3010, commit bca2ed62).
     if (!cached || !cached.isSuccess) {
         id = getUniqueId();
+        // PDFs are rasterised through PDF.js rather than loaded as an <img>.
+        if (/\.pdf(?:\?|$)/i.test(src)) {
+            loadPdfAsync.call(this, src, id, attrs, className, imageClass);
+            return { id, isSuccess: undefined, url: undefined, width: w, height: h };
+        }
         loadImage(src, isUnknownType)
             .then(({ url, width, height }) => {
                 const imageText: HTMLElement | null = document.querySelector(`#${id}`);

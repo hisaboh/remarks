@@ -9,6 +9,11 @@ declare module '*.css';
 declare module '*.css?inline';
 declare module '*.woff';
 declare module '*.woff2';
+// Vite `?url` imports resolve to the asset's URL string (e.g. the PDF.js worker).
+declare module '*?url' {
+    const url: string;
+    export default url;
+}
 declare module 'joplin-turndown-plugin-gfm';
 declare module 'prismjs/plugins/keep-markup/prism-keep-markup';
 declare module 'prismjs/dependencies';

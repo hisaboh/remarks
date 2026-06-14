@@ -134,6 +134,51 @@ describe('getImageSrc — non-relative sources are left unchanged', () => {
     });
 });
 
+describe('getImageSrc — PDF references resolve like local images (#11)', () => {
+    it('resolves a relative .pdf against the document directory', () => {
+        withDirname(DIRNAME, () => {
+            expect(getImageSrc('paper.assets/computer.pdf')).toEqual({
+                isUnknownType: false,
+                src: 'file:///home/user/docs/paper.assets/computer.pdf',
+            });
+        });
+    });
+
+    it('keeps the query suffix form working (`.pdf?...`)', () => {
+        withDirname(DIRNAME, () => {
+            expect(getImageSrc('a/b.pdf?v=2').src).toBe(
+                'file:///home/user/docs/a/b.pdf?v=2',
+            );
+        });
+    });
+
+    it('leaves an absolute .pdf path as a single `file://`', () => {
+        withDirname(DIRNAME, () => {
+            expect(getImageSrc('/var/docs/x.pdf').src).toBe('file:///var/docs/x.pdf');
+        });
+    });
+
+    it('falls back to bare `file://` for a relative .pdf without DIRNAME', () => {
+        withDirname(undefined, () => {
+            expect(getImageSrc('x.pdf').src).toBe('file://x.pdf');
+        });
+    });
+
+    it('leaves an http(s) .pdf URL untouched', () => {
+        withDirname(DIRNAME, () => {
+            expect(getImageSrc('https://example.com/x.pdf').src).toBe(
+                'https://example.com/x.pdf',
+            );
+        });
+    });
+
+    it('leaves an already-`file://` .pdf untouched', () => {
+        withDirname(DIRNAME, () => {
+            expect(getImageSrc('file:///abs/x.pdf').src).toBe('file:///abs/x.pdf');
+        });
+    });
+});
+
 describe('getImageSrc — Windows drive + UNC base directories (Phase G review)', () => {
     it('preserves the drive when resolving `..`', () => {
         withDirname('C:/Users/me/docs', () => {
