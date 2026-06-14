@@ -57,11 +57,12 @@
       <textarea
         class="custom-css-input"
         rows="10"
+        spellcheck="false"
+        autocapitalize="off"
+        autocorrect="off"
         :value="customCss"
-        @change="
-          (event: Event) =>
-            onSelectChange('customCss', (event.target as HTMLTextAreaElement).value)
-        "
+        @input="onCustomCssInput"
+        @change="onCustomCssChange"
       />
     </div>
     <separator v-show="false" />
@@ -137,6 +138,33 @@ onMounted(async () => {
 
 const onSelectChange = (type: keyof PreferencesState, value: unknown): void => {
   preferenceStore.SET_SINGLE_PREFERENCE({ type, value })
+}
+
+// macOS WKWebView applies the system "smart quotes"/"smart dashes" substitution
+// to typed input, turning a straight ' / " into a curly ‘ / “ and `--` into an
+// em dash — all invalid in CSS, so e.g. `content: '#'` silently stopped working.
+// Disabling it natively (NSUserDefaults) does not affect WKWebView typing, so
+// normalize the custom-CSS field's text back to straight characters instead.
+const normalizeSmartChars = (value: string): string =>
+  value
+    .replace(/[‘’]/g, "'") // ‘ ’ → '
+    .replace(/[“”]/g, '"') // “ ” → "
+    .replace(/—/g, '--') // — → -- (e.g. CSS custom properties)
+
+const onCustomCssInput = (event: Event): void => {
+  const textarea = event.target as HTMLTextAreaElement
+  const normalized = normalizeSmartChars(textarea.value)
+  if (normalized === textarea.value) return
+  // Preserve the caret: its new position is the normalized length of the
+  // text before it (substitutions can change length, e.g. — → --).
+  const caret = normalizeSmartChars(textarea.value.slice(0, textarea.selectionStart ?? 0)).length
+  textarea.value = normalized
+  textarea.setSelectionRange(caret, caret)
+}
+
+const onCustomCssChange = (event: Event): void => {
+  // Backstop: persist the normalized value even if an input event was missed.
+  onSelectChange('customCss', normalizeSmartChars((event.target as HTMLTextAreaElement).value))
 }
 </script>
 
