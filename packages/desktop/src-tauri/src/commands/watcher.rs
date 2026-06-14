@@ -194,8 +194,20 @@ fn load_project(app: &AppHandle, window: &WebviewWindow, root: &str) {
     let label = window.label().to_string();
     *app.state::<WatcherState>().project.lock().unwrap() = Some((root.to_string(), label.clone()));
     let _ = window.emit_to(&label, "mt::open-directory", root);
-    watch_dir(app, root);
-    scan_dir(app, &label, root);
+    // Set up the watcher AND run the initial scan off the main thread.
+    // Synchronous Tauri commands execute on the main thread, and for a large
+    // project both `watch_dir` (the notify-debouncer-full file-id cache does a
+    // recursive stat() walk on watch()) and `scan_dir` (recursive read_dir +
+    // per-node tree events) would freeze the UI on open/restore — the
+    // beachball in #12. Both emit/observe asynchronously, so the editor stays
+    // interactive; the renderer applies the emitted tree events in time-sliced
+    // batches so the sidebar fills progressively.
+    let app_bg = app.clone();
+    let root_bg = root.to_string();
+    std::thread::spawn(move || {
+        watch_dir(&app_bg, &root_bg);
+        scan_dir(&app_bg, &label, &root_bg);
+    });
 }
 
 /// Recursively watch a directory for changes (ongoing tree updates).

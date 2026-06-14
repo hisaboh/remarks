@@ -82,6 +82,13 @@ export const useProjectStore = defineStore('project', () => {
   const clipboard = ref<ClipboardEntry | null>(null)
   const projectTree = ref<ProjectTree | null>(null)
   const pendingTreeEvents = ref<PendingEvent[]>([])
+  // Sidebar tree events (the initial recursive scan emits one per dir/file) are
+  // applied in time-sliced async batches instead of synchronously, so opening a
+  // large project on startup never blocks the editor — the file tree fills in
+  // progressively while typing stays responsive (#12). Plain arrays (not refs):
+  // the queue is bookkeeping, only the tree it mutates needs reactivity.
+  const treeEventQueue: PendingEvent[] = []
+  let treeFlushScheduled = false
 
   const preferencesStore = usePreferencesStore()
 
@@ -112,11 +119,13 @@ export const useProjectStore = defineStore('project', () => {
     layoutStore.SET_LAYOUT(layout, { scheduleBufferUpdate })
     layoutStore.DISPATCH_LAYOUT_MENU_ITEMS()
 
-    // Process pending events that arrived before projectTree was initialized.
+    // Apply events that arrived before projectTree was initialized — queued and
+    // flushed in slices (the startup scan of a large project is the hot path).
     for (const event of pendingTreeEvents.value) {
-      _processTreeEvent(event.type, event.change)
+      treeEventQueue.push(event)
     }
     pendingTreeEvents.value = []
+    if (treeEventQueue.length > 0) _scheduleTreeFlush()
 
     if (scheduleBufferUpdate) {
       debouncedSendBufferedState()
@@ -137,6 +146,7 @@ export const useProjectStore = defineStore('project', () => {
     } else {
       projectTree.value = null
       pendingTreeEvents.value = []
+      treeEventQueue.length = 0
     }
   }
 
@@ -154,7 +164,7 @@ export const useProjectStore = defineStore('project', () => {
         pendingTreeEvents.value.push({ type, change })
         return
       }
-      _processTreeEvent(type, change)
+      _enqueueTreeEvent({ type, change })
     })
   }
 
@@ -191,6 +201,42 @@ export const useProjectStore = defineStore('project', () => {
           console.log(`Unknown directory watch type: "${type}"`)
         }
         break
+    }
+  }
+
+  // Queue a tree event and ensure a flush is scheduled. Used for both the live
+  // watch stream and the startup pending-events drain.
+  function _enqueueTreeEvent(event: PendingEvent): void {
+    treeEventQueue.push(event)
+    _scheduleTreeFlush()
+  }
+
+  // Drain the queue in ~8ms slices (one yield per slice) so the main thread
+  // stays free between batches and the editor remains interactive while a large
+  // project tree builds up.
+  function _flushTreeEvents(): void {
+    treeFlushScheduled = false
+    if (!projectTree.value) {
+      treeEventQueue.length = 0
+      return
+    }
+    const deadline = performance.now() + 8
+    while (treeEventQueue.length > 0 && performance.now() < deadline) {
+      const event = treeEventQueue.shift()
+      if (event) _processTreeEvent(event.type, event.change)
+    }
+    if (treeEventQueue.length > 0) _scheduleTreeFlush()
+  }
+
+  function _scheduleTreeFlush(): void {
+    if (treeFlushScheduled) return
+    treeFlushScheduled = true
+    // requestIdleCallback yields to input/rendering first; fall back to a
+    // macrotask where it is unavailable.
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(() => _flushTreeEvents(), { timeout: 100 })
+    } else {
+      setTimeout(() => _flushTreeEvents(), 0)
     }
   }
 
