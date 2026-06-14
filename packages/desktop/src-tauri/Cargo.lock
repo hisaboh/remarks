@@ -2398,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "marktext"
-version = "0.20.0-dev"
+version = "0.20.0-dev.1"
 dependencies = [
  "chardetng",
  "core-text",

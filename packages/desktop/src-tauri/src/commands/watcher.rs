@@ -32,6 +32,13 @@ const SKIP_DIRS: &[&str] = &["node_modules", ".git"];
 const IGNORE_DURATION: Duration = Duration::from_millis(2000);
 /// Debounce window for coalescing rapid native events.
 const DEBOUNCE: Duration = Duration::from_millis(500);
+/// Delay between emitting the opened folder's top level and starting the
+/// recursive watch + deep scan, so the direct children render first (#12).
+/// Generous enough that the heavy deep-scan event flood doesn't land in the
+/// middle of the renderer's editor initialization at startup (which would push
+/// back when the user can start typing); the "rest" of the tree filling in a
+/// bit later is the accepted trade-off.
+const DEEP_SCAN_DELAY: Duration = Duration::from_millis(400);
 
 type FullDebouncer = Debouncer<RecommendedWatcher, RecommendedCache>;
 
@@ -194,19 +201,32 @@ fn load_project(app: &AppHandle, window: &WebviewWindow, root: &str) {
     let label = window.label().to_string();
     *app.state::<WatcherState>().project.lock().unwrap() = Some((root.to_string(), label.clone()));
     let _ = window.emit_to(&label, "mt::open-directory", root);
-    // Set up the watcher AND run the initial scan off the main thread.
-    // Synchronous Tauri commands execute on the main thread, and for a large
-    // project both `watch_dir` (the notify-debouncer-full file-id cache does a
-    // recursive stat() walk on watch()) and `scan_dir` (recursive read_dir +
-    // per-node tree events) would freeze the UI on open/restore — the
-    // beachball in #12. Both emit/observe asynchronously, so the editor stays
-    // interactive; the renderer applies the emitted tree events in time-sliced
-    // batches so the sidebar fills progressively.
+    // Populate the sidebar off the main thread (synchronous Tauri commands run
+    // on the WKWebView UI thread; a large project's recursive stat/readdir walk
+    // would freeze it — the beachball in #12). Two phases so the opened folder's
+    // direct children appear immediately and the rest fills in afterwards:
+    //   1. scan the root's top level and emit it right away;
+    //   2. after a short delay, start the recursive watch (notify's file-id
+    //      cache does a full recursive stat() walk on watch()) and scan the
+    //      deeper subtree.
+    // Doing the heavy watch + deep scan first (as before) left the sidebar empty
+    // for seconds until the whole tree had been walked. The renderer still
+    // applies the emitted tree events in time-sliced batches so absorbing the
+    // deep-scan flood stays non-blocking.
     let app_bg = app.clone();
     let root_bg = root.to_string();
     std::thread::spawn(move || {
+        // Phase 1 — opened folder's direct children, emitted immediately.
+        let subdirs = scan_dir_level(&app_bg, &label, std::path::Path::new(&root_bg));
+        // Phase 2 — recursive watch + deep scan, deferred so the top-level
+        // listing renders first and doesn't compete with the event flood.
+        std::thread::sleep(DEEP_SCAN_DELAY);
         watch_dir(&app_bg, &root_bg);
-        scan_dir(&app_bg, &label, &root_bg);
+        let mut stack = subdirs;
+        while let Some(dir) = stack.pop() {
+            let mut children = scan_dir_level(&app_bg, &label, &dir);
+            stack.append(&mut children);
+        }
     });
 }
 
@@ -221,30 +241,30 @@ fn watch_dir(app: &AppHandle, root: &str) {
     }
 }
 
-/// Initial recursive scan emitting addDir/add tree events so the sidebar
-/// populates (notify, unlike chokidar, doesn't replay existing entries).
-fn scan_dir(app: &AppHandle, label: &str, root: &str) {
-    let mut stack = vec![std::path::PathBuf::from(root)];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        for entry in entries.flatten() {
-            let Ok(ft) = entry.file_type() else { continue };
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if ft.is_dir() {
-                if SKIP_DIRS.contains(&name.as_str()) {
-                    continue;
-                }
-                emit_tree(app, label, "addDir", json!({ "pathname": path.to_string_lossy() }));
-                stack.push(path);
-            } else if ft.is_file() {
-                let p = path.to_string_lossy().into_owned();
-                if crate::commands::files::is_markdown_path(&p) {
-                    emit_tree(app, label, "add", file_change(&p, &name));
-                }
+/// Scan a single directory level: emit addDir/add tree events for its entries
+/// and return its sub-directories so the caller can descend. notify, unlike
+/// chokidar, doesn't replay existing entries, hence the explicit scan.
+fn scan_dir_level(app: &AppHandle, label: &str, dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut subdirs = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else { return subdirs };
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if ft.is_dir() {
+            if SKIP_DIRS.contains(&name.as_str()) {
+                continue;
+            }
+            emit_tree(app, label, "addDir", json!({ "pathname": path.to_string_lossy() }));
+            subdirs.push(path);
+        } else if ft.is_file() {
+            let p = path.to_string_lossy().into_owned();
+            if crate::commands::files::is_markdown_path(&p) {
+                emit_tree(app, label, "add", file_change(&p, &name));
             }
         }
     }
+    subdirs
 }
 
 /// Map an ongoing watch event under the project root to a tree update.

@@ -232,9 +232,13 @@ export const useProjectStore = defineStore('project', () => {
     if (treeFlushScheduled) return
     treeFlushScheduled = true
     // requestIdleCallback yields to input/rendering first; fall back to a
-    // macrotask where it is unavailable.
+    // macrotask where it is unavailable. The timeout is the worst-case wait
+    // before a busy main thread is forced to flush — kept generous (500ms) so
+    // editor initialization at startup isn't repeatedly preempted by the
+    // tree-event flood; once the thread goes idle the queue drains promptly
+    // anyway. Live single-event updates only hit this ceiling while busy.
     if (typeof window.requestIdleCallback === 'function') {
-      window.requestIdleCallback(() => _flushTreeEvents(), { timeout: 100 })
+      window.requestIdleCallback(() => _flushTreeEvents(), { timeout: 500 })
     } else {
       setTimeout(() => _flushTreeEvents(), 0)
     }
