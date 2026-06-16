@@ -1363,6 +1363,14 @@ const setMarkdownToEditor = (payload: unknown) => {
     }
     if (newCursor) {
       editor.value.setCursor(newCursor)
+    } else {
+      // A freshly-opened blank document (e.g. a new untitled tab from Cmd+T)
+      // carries no saved caret. `setContent` rebuilds the block tree but leaves
+      // the DOM caret unplaced, so the browser drops it on the editor container
+      // — one line above the first paragraph — and typed text lands outside any
+      // block and leaks across tabs (hisaboh/remarks#15). Place the caret at the
+      // first leaf block AND focus the contenteditable so WKWebView shows it.
+      focusFreshDocument()
     }
   }
 }
@@ -1454,6 +1462,13 @@ const handleFileChange = (payload: unknown) => {
         // engine runs its own setContent dance internally, so restore the
         // history after.
         editor.value.setCursorByOffset(muyaIndexCursor)
+      } else {
+        // Switching to a tab that has no saved caret — e.g. a never-focused
+        // untitled tab reached via Ctrl+Tab. Without this, `setContent` leaves
+        // the DOM caret on the editor container above the first line
+        // (hisaboh/remarks#16); place it at the document start and focus the
+        // contenteditable so the caret is visible.
+        focusFreshDocument()
       }
       const savedEngineHistory = id ? engineHistoryByTab.get(id) : undefined
       if (savedEngineHistory) {
@@ -1473,6 +1488,36 @@ const handleFileChange = (payload: unknown) => {
     container.style.pointerEvents = 'auto'
     scrollToCursor(0)
   }
+}
+
+// Place the caret at the start of the freshly-loaded document AND give the
+// contenteditable real DOM focus. A blank/untitled tab carries no saved cursor,
+// and `setContent` rebuilds the block tree — which resets `document.activeElement`
+// back to <body>. The engine's `focus()`/`setCursor` only writes a DOM Range
+// (`removeAllRanges`/`addRange`); WKWebView won't render a blinking caret or
+// route keystrokes unless the contenteditable is also the active element, so the
+// caret would be invisible until the user clicks (hisaboh/remarks#15).
+//
+// Deferred to the next frame because `handleFileChange` hides the scroll
+// container (`visibility: hidden`) for scroll restoration AFTER the caret
+// branch runs, and on a new untitled tab the `file-loaded` handler fires right
+// after `file-changed` — so a synchronous focus would target a hidden element,
+// which WKWebView refuses to show a caret in. The frame delay (plus forcing the
+// container visible here) guarantees we focus a painted, visible editor, and a
+// rapid burst of new tabs / tab-cycles collapses to the last scheduled focus.
+const focusFreshDocument = () => {
+  requestAnimationFrame(() => {
+    if (!editor.value) return
+    const dom = editor.value.domNode as HTMLElement | undefined
+    if (dom) {
+      dom.style.visibility = 'visible'
+      dom.style.pointerEvents = 'auto'
+      if (document.activeElement !== dom) {
+        dom.focus({ preventScroll: true })
+      }
+    }
+    editor.value.focus()
+  })
 }
 
 const handleInsertParagraph = (location: unknown) => {
