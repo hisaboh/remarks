@@ -1370,7 +1370,7 @@ const setMarkdownToEditor = (payload: unknown) => {
       // — one line above the first paragraph — and typed text lands outside any
       // block and leaks across tabs (hisaboh/remarks#15). Place the caret at the
       // first leaf block AND focus the contenteditable so WKWebView shows it.
-      focusFreshDocument()
+      focusFreshDocument(id)
     }
   }
 }
@@ -1468,7 +1468,7 @@ const handleFileChange = (payload: unknown) => {
         // the DOM caret on the editor container above the first line
         // (hisaboh/remarks#16); place it at the document start and focus the
         // contenteditable so the caret is visible.
-        focusFreshDocument()
+        focusFreshDocument(id)
       }
       const savedEngineHistory = id ? engineHistoryByTab.get(id) : undefined
       if (savedEngineHistory) {
@@ -1505,9 +1505,13 @@ const handleFileChange = (payload: unknown) => {
 // which WKWebView refuses to show a caret in. The frame delay (plus forcing the
 // container visible here) guarantees we focus a painted, visible editor, and a
 // rapid burst of new tabs / tab-cycles collapses to the last scheduled focus.
-const focusFreshDocument = () => {
+let freshDocumentFocusRequestId = 0
+const focusFreshDocument = (targetFileId?: string) => {
+  const requestId = ++freshDocumentFocusRequestId
   requestAnimationFrame(() => {
     if (!editor.value) return
+    if (requestId !== freshDocumentFocusRequestId) return
+    if (targetFileId && currentFile.value?.id !== targetFileId) return
     const dom = editor.value.domNode as HTMLElement | undefined
     if (dom) {
       dom.style.visibility = 'visible'

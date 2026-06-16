@@ -204,6 +204,7 @@ const onKeyDown = (e: KeyboardEvent): void => {
   const id = signatureToCommand.get(sig)
   if (id) {
     e.preventDefault()
+    e.stopImmediatePropagation()
     execute(id)
   }
 }
