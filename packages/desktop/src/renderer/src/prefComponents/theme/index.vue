@@ -1,7 +1,10 @@
 <template>
   <div class="pref-theme">
     <h4>{{ t('preferences.theme.title') }}</h4>
-    <section class="offcial-themes">
+    <section
+      class="offcial-themes"
+      @click.capture="onPreviewClick"
+    >
       <div
         v-for="themeItem of themes"
         :key="themeItem.name"
@@ -138,6 +141,22 @@ onMounted(async () => {
 
 const onSelectChange = (type: keyof PreferencesState, value: unknown): void => {
   preferenceStore.SET_SINGLE_PREFERENCE({ type, value })
+}
+
+// Safety net, scoped to the theme-preview cards only. The previews are rendered
+// from markdown and injected via v-html, so they can contain bare <a href>
+// anchors. A plain anchor click would navigate the whole preferences WebView
+// away from the app. Intercept anchor clicks within this section (capture phase,
+// so it runs before the card's theme-select handler), cancel the navigation,
+// and hand the URL to the OS browser instead. This listener lives only on the
+// preview <section>; it does not touch document-/window-level navigation.
+const onPreviewClick = (event: MouseEvent): void => {
+  const anchor = (event.target as HTMLElement | null)?.closest('a')
+  if (!anchor) return
+  event.preventDefault()
+  event.stopPropagation()
+  const href = anchor.getAttribute('href')
+  if (href) window.electron.shell.openExternal(href)
 }
 
 // macOS WKWebView applies the system "smart quotes"/"smart dashes" substitution
