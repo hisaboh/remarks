@@ -1352,6 +1352,10 @@ const setMarkdownToEditor = (payload: unknown) => {
     // `setContent` resets the document and clears the undo history; only set a
     // cursor afterwards (a freshly-opened file has no history to restore).
     editor.value.setContent(newMarkdown ?? '')
+    // `setContent` does not emit `json-change`, so seed the sidebar TOC from the
+    // freshly loaded document — otherwise it stays empty until the first edit
+    // (hisaboh/remarks#19).
+    editorStore.UPDATE_TOC(editor.value.getTOC())
     // The freshly loaded content is this tab's clean baseline (id 0). Re-seed
     // the monotonic save-tracking allocator so undoing an edit back to this
     // content reads as clean again (matches the store's `lastSavedHistoryId: 0`).
@@ -1454,6 +1458,9 @@ const handleFileChange = (payload: unknown) => {
       // `history` in the payload is the synthetic desktop-shaped history used
       // for save tracking, not the engine history.
       editor.value.setContent(newMarkdown)
+      // `setContent` does not emit `json-change`, so refresh the sidebar TOC for
+      // the tab being switched in (hisaboh/remarks#19).
+      editorStore.UPDATE_TOC(editor.value.getTOC())
       if (newCursor) {
         editor.value.setCursor(newCursor)
       } else if (isIndexCursor(muyaIndexCursor)) {

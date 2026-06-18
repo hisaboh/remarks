@@ -1323,6 +1323,19 @@ export const useEditorStore = defineStore('editor', {
       }
     },
 
+    /**
+     * Refresh the sidebar TOC from a flat heading list. The engine only emits
+     * `json-change` (which feeds LISTEN_FOR_CONTENT_CHANGE) on document
+     * MUTATIONS, not on the `setContent` used to load a file or switch tabs —
+     * so the editor must call this after each load to seed the TOC, otherwise
+     * the panel stays empty until the first edit (hisaboh/remarks#19).
+     */
+    UPDATE_TOC(toc: TocItem[]): void {
+      if (equal(toc, this.listToc)) return
+      this.listToc = toc
+      this.toc = listToTree<TocItem>(toc)
+    },
+
     // Content change from realtime preview editor and source code editor
     // There is a chance that this event is fired AFTER the tab is switched.
     LISTEN_FOR_CONTENT_CHANGE({
@@ -1367,9 +1380,8 @@ export const useEditorStore = defineStore('editor', {
       if (blocks) tab.blocks = blocks
 
       // Only update TOC if it's the current file
-      if (id === this.currentFile?.id && toc && !equal(toc, this.listToc)) {
-        this.listToc = toc
-        this.toc = listToTree<TocItem>(toc)
+      if (id === this.currentFile?.id && toc) {
+        this.UPDATE_TOC(toc)
       }
 
       const lastEditIndex = tab.history.lastEditIndex
