@@ -1,5 +1,13 @@
 # MarkText Contributing Guide
 
+> **Note for this fork (Remarks / `hisaboh/remarks`).** This is the upstream
+> MarkText contributor guide, kept for reference; it targets the upstream repo
+> and its `develop` branch. In this fork, the working branch is **`main`** (the
+> GitHub default) — open PRs and land work there. **`upstream-sync`** is a
+> read-only mirror of upstream (`marktext/marktext`); never PR against it or
+> merge `main` into it. The `develop` / `marktext/marktext` references below
+> apply to contributing to MarkText itself, not to this fork.
+
 We are really excited that you are interested in contributing to MarkText :tada:. Before submitting your contribution, please make sure to take a moment and read through the following guidelines.
 
 - [Code of Conduct](../packages/website/content/docs/dev/CODE_OF_CONDUCT.md)

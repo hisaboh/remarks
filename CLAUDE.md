@@ -401,8 +401,15 @@ See `packages/website/content/docs/dev/IPC.md` for conventions and examples.
 
 ## Contribution
 
-- Submit PRs to the **`develop`** branch (not `main`).
+- **Branches (this fork):** `main` is the active working branch and the GitHub
+  default — land work here (or feature branches off it). `upstream-sync` is a
+  read-only mirror of the upstream fork source (`marktext/marktext`); it exists
+  only to pull upstream changes in. Do **not** open PRs against `upstream-sync`
+  or merge `main` into it. (Branches were renamed 2026-06-19 from `tauri2.0` →
+  `main` and `develop` → `upstream-sync`.)
 - Reference the related issue in the PR description.
 - Run `pnpm run lint` before submitting.
 - All PRs must pass CI before merge.
-- See `.github/CONTRIBUTING.md` for the full contributing guide.
+- `.github/CONTRIBUTING.md` is the upstream MarkText contributor guide (it still
+  references `develop` and the upstream repo); it applies to contributing to
+  MarkText itself, not to this fork's `main`-based workflow.
