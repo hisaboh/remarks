@@ -146,7 +146,7 @@ export const usePreferencesStore = defineStore('preferences', {
     zoom: 1.0,
     hideScrollbar: false,
     wordWrapInToc: false,
-    fileSortBy: 'created',
+    fileSortBy: 'title',
     fileSortOrder: 'asc',
     startUpAction: 'restoreAll',
     restoreLayoutState: true,

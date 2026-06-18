@@ -45,7 +45,7 @@
   "fileSortBy": {
     "description": "General--Sort files in opened folder by created time, modified time and title.",
     "enum": ["modified", "created", "title"],
-    "default": "modified"
+    "default": "title"
   },
   "fileSortOrder": {
     "description": "General--Sort order for files in opened folders: ascending or descending.",
