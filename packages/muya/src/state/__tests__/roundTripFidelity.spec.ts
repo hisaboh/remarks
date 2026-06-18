@@ -46,6 +46,37 @@ describe('markdown round-trip fidelity', () => {
         expect(states.map(s => s.name)).toEqual(['paragraph', 'paragraph']);
     });
 
+    // marked folds the blank-line run AFTER a heading into the heading token's
+    // `raw` (no separate `space` token), so the empty lines must be recovered
+    // in the heading handler — otherwise authored blank lines between/after
+    // headings collapse on round trip.
+    it('keeps an authored empty line between two headings', () => {
+        const md = '# A\n\n\n# B\n';
+        const states = toState(md);
+        expect(states.map(s => s.name)).toEqual(['atx-heading', 'paragraph', 'atx-heading']);
+        expect(roundTrip(md)).toBe(md);
+    });
+
+    it('keeps multiple authored empty lines between headings', () => {
+        const md = '# A\n\n\n\n# B\n';
+        expect(roundTrip(md)).toBe(md);
+    });
+
+    it('keeps an authored empty line between a heading and a paragraph', () => {
+        const md = '# H\n\n\ntext\n';
+        expect(roundTrip(md)).toBe(md);
+    });
+
+    it('a plain heading separator adds no empty paragraphs', () => {
+        const states = toState('# A\n\n# B\n');
+        expect(states.map(s => s.name)).toEqual(['atx-heading', 'atx-heading']);
+    });
+
+    it('drops blank lines after a heading without preserveEmptyLines', () => {
+        const states = toState('# A\n\n\n# B\n', false);
+        expect(states.map(s => s.name)).toEqual(['atx-heading', 'atx-heading']);
+    });
+
     it('keeps the full fence info string (pandoc attributes)', () => {
         const md = `${FENCE}{#lst:peano_axioms .haskell caption="自然数の定義"}\ndata N = Zero | S N\n${FENCE}\n`;
         const states = toState(md);

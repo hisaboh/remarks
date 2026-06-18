@@ -142,6 +142,19 @@ export class MarkdownToState {
                     }
 
                     parentList[0].push(state);
+
+                    // Headings absorb their trailing blank-line run into
+                    // `token.raw` (marked emits NO separate `space` token after
+                    // a heading), so the blank-line preservation in `case
+                    // 'space'` never sees them and authored empty lines right
+                    // after a heading are lost on round trip. Recover them here
+                    // with the same rule as the space handler: every newline
+                    // beyond the `\n\n` block separator is an empty paragraph.
+                    if (preserveEmptyLines && parentList.length === 1) {
+                        const trailingNewlines = token.raw.match(/\n+$/)?.[0].length ?? 0;
+                        for (let i = 2; i < trailingNewlines; i++)
+                            parentList[0].push({ name: 'paragraph' as const, text: '' });
+                    }
                     break;
                 }
 

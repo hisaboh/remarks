@@ -80,11 +80,19 @@ class JSONState {
     // Parse markdown into a block-state array with the editor's current
     // render-affecting options, WITHOUT mutating `this._state`. Used by
     // `buildReplaceOp` to compute the target state for a bulk replacement.
-    markdownToState(markdown: string): TState[] {
+    markdownToState(
+        markdown: string,
+        // `trimUnnecessaryCodeBlockEmptyLines` is a load/import-time
+        // normalization: it strips the leading/trailing empty lines INSIDE
+        // fenced code blocks. It must NOT run on the source-mode ⇄ WYSIWYG
+        // round trip (`buildReplaceOp`), otherwise every mode switch would
+        // silently delete blank lines a user deliberately typed inside a code
+        // block. Round-trip callers pass `false`; file load keeps the option.
+        trimCodeBlockEmptyLines = this.muya.options.trimUnnecessaryCodeBlockEmptyLines,
+    ): TState[] {
         const {
             footnote,
             isGitlabCompatibilityEnabled,
-            trimUnnecessaryCodeBlockEmptyLines,
             frontMatter,
             math,
             preserveEmptyLines,
@@ -93,7 +101,7 @@ class JSONState {
         return new MarkdownToState({
             footnote,
             isGitlabCompatibilityEnabled,
-            trimUnnecessaryCodeBlockEmptyLines,
+            trimUnnecessaryCodeBlockEmptyLines: trimCodeBlockEmptyLines,
             frontMatter,
             math,
             preserveEmptyLines,
@@ -119,7 +127,9 @@ class JSONState {
     } {
         const prevState = this.getState();
         const nextState
-            = typeof content === 'string' ? this.markdownToState(content) : deepClone(content);
+            = typeof content === 'string'
+                ? this.markdownToState(content, /* trimCodeBlockEmptyLines */ false)
+                : deepClone(content);
 
         const components: JSONOpList[] = [];
         const max = Math.max(prevState.length, nextState.length);

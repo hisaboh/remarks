@@ -393,4 +393,26 @@ describe('muya replaceContent — single undo boundary', () => {
             expect(muya.getMarkdown().trim()).toBe('one');
         });
     });
+
+    // `trimUnnecessaryCodeBlockEmptyLines` is a load-time normalization, not a
+    // per-edit one: it must NOT fire on the source-mode ⇄ WYSIWYG round trip
+    // (`replaceContent`/`buildReplaceOp`), or blank lines a user typed inside a
+    // fenced block would vanish on every mode switch. Boot with the option ON
+    // (the desktop default) and assert replaceContent preserves them anyway.
+    it('replaceContent does not trim code-block empty lines (round-trip safety)', async () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const muya = new Muya(host, {
+            markdown: '',
+            preserveEmptyLines: true,
+            trimUnnecessaryCodeBlockEmptyLines: true,
+        } as unknown as ConstructorParameters<typeof Muya>[1]);
+        muya.init();
+        bootedHosts.push(muya.domNode);
+
+        const fence = '```';
+        const md = `${fence}js\n\nconst a = 1\n\n${fence}\n`;
+        muya.replaceContent(md);
+        expect(muya.getMarkdown()).toBe(md);
+    });
 });
