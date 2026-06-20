@@ -14,6 +14,10 @@ declare module '*?url' {
     const url: string;
     export default url;
 }
+declare module '*.woff2?inline' {
+    const dataUri: string;
+    export default dataUri;
+}
 declare module 'joplin-turndown-plugin-gfm';
 declare module 'prismjs/plugins/keep-markup/prism-keep-markup';
 declare module 'prismjs/dependencies';

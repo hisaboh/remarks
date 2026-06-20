@@ -434,18 +434,16 @@ const adaptSelectionChange = (changes: MuyaChange) => {
 // re-resolves the target blocks from `anchorPath`/`focusPath`.
 const serializeCursor = (
   selection: {
-    anchor?: { offset: number }
-    focus?: { offset: number }
-    anchorPath?: Array<string | number>
-    focusPath?: Array<string | number>
+    anchor?: { offset: number; path?: Array<string | number> }
+    focus?: { offset: number; path?: Array<string | number> }
   } | null
 ) => {
   if (!selection) return null
   return {
     anchor: selection.anchor ? { offset: selection.anchor.offset } : null,
     focus: selection.focus ? { offset: selection.focus.offset } : null,
-    anchorPath: selection.anchorPath,
-    focusPath: selection.focusPath
+    anchorPath: selection.anchor?.path,
+    focusPath: selection.focus?.path
   }
 }
 
@@ -767,8 +765,9 @@ watch(spellcheckerEnabled, (value, oldValue) => {
 
 watch(spellcheckerNoUnderline, (value, oldValue) => {
   if (value !== oldValue) {
-    // Set Muya's spellcheck container attribute.
-    editor.value.setOptions({ spellcheckEnabled: !value })
+    // Hide only the spelling squiggle; the native checker (and its right-click
+    // suggestions) stays controlled by `spellcheckerEnabled`.
+    editor.value.setOptions({ spellcheckHideMarks: value })
   }
 })
 
@@ -1443,6 +1442,8 @@ const setMarkdownToEditor = (payload: unknown) => {
     // `json-change`, so seed the TOC explicitly (otherwise it stays empty until
     // the first edit, and a file switch keeps the previous file's TOC).
     editorStore.UPDATE_TOC(editor.value.getTOC())
+    // A freshly created/opened tab should be ready to type into.
+    focusFreshEditor()
   }
 }
 
@@ -1455,6 +1456,7 @@ interface FileChangePayload {
   scrollTop?: number
   muyaIndexCursor?: unknown
   blocks?: unknown
+  isReload?: boolean
 }
 
 // listen for markdown change form source mode or change tabs etc
@@ -1465,7 +1467,8 @@ const handleFileChange = (payload: unknown) => {
     cursor: newCursor,
     muyaIndexCursor,
     history: payloadHistory,
-    scrollTop
+    scrollTop,
+    isReload
   } = (payload ?? {}) as FileChangePayload
   if (!editor.value) return
   const container = getScrollContainer()
@@ -1503,6 +1506,28 @@ const handleFileChange = (payload: unknown) => {
       // Map the CodeMirror `{ line, ch }` cursor onto a block-key cursor so the
       // WYSIWYG caret lands where the source-mode cursor was (PG2).
       editor.value.setCursorByOffset(muyaIndexCursor)
+    } else if (isReload) {
+      // External disk reload (`loadChange`): the tab is already the live engine
+      // document, so record the new on-disk content as a SINGLE invertible undo
+      // boundary via `replaceContent` (legacy muyajs full-state-snapshot parity)
+      // — the first undo after the reload restores the pre-reload document in one
+      // step. `setContent` would clear the engine history and lose that boundary;
+      // restoring the per-tab engine history (the tab-switch path) would clobber
+      // it too. `replaceContent` preserves the existing undo stack and pushes the
+      // boundary on top.
+      //
+      // The new content is this tab's clean baseline (the store seeds
+      // `lastSavedHistoryId: 0`), so re-seed the save-tracking allocator BEFORE
+      // applying: `replaceContent` fires a SYNCHRONOUS `json-change` that would
+      // otherwise mark the tab dirty against the stale (pre-reload) baseline.
+      if (id) {
+        resetSyntheticHistory(id, newMarkdown)
+      }
+      editor.value.replaceContent(newMarkdown)
+      editorStore.UPDATE_TOC(editor.value.getTOC())
+      if (newCursor) {
+        applyCursor(editor.value, newCursor)
+      }
     } else {
       // Tab switch / programmatic content swap: `setContent` replaces the
       // document and clears history, so restore the real engine history (kept
@@ -1600,6 +1625,23 @@ const blurEditor = () => {
 
 const focusEditor = () => {
   editor.value?.focus()
+}
+
+// Focus a freshly opened/created tab's editor. The sibling `file-changed`
+// handler (emitted first, while the store commits the tab switch) hides the
+// editor and queues a `requestAnimationFrame` via `scrollToCords` to restore
+// it, and focus() is a no-op while the container is `visibility:hidden`. Our
+// rAF is registered after that restore rAF, so it runs once the editor is
+// visible; then take DOM focus (the engine's `focus()` only sets the selection
+// range — the contenteditable also needs focus or no caret blinks) and place
+// the caret at the document start.
+const focusFreshEditor = () => {
+  requestAnimationFrame(() => {
+    const ed = editor.value
+    if (!ed) return
+    ed.domNode.focus()
+    ed.focus()
+  })
 }
 
 // When a focus-trapping modal (the command palette) opens, release the editor's
@@ -1711,6 +1753,7 @@ onMounted(() => {
     sequenceTheme: sequenceTheme.value,
     plantumlServer: preferencesStore.plantumlServer,
     spellcheckEnabled: spellcheckerEnabled.value,
+    spellcheckHideMarks: spellcheckerNoUnderline.value,
     // Resolve the OS clipboard to a local file path on paste (image-from-file).
     clipboardFilePath: guessClipboardFilePath,
     // Read the OS clipboard's plain text for "Paste as Plain Text" (execCommand('paste') no longer fires).
