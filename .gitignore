@@ -16,7 +16,9 @@ logs/
 test-results/
 playwright-report/
 *.min.json
-.claude/settings.local.json
-.claude/
+# Ignore local Claude Code state, but share project skills (.claude/skills/).
+.claude/*
+!.claude/skills/
+.claude/skills/**/settings.local.json
 .agents/
 .agent/
