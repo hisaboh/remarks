@@ -1,10 +1,10 @@
 import type { Muya } from '../muya';
 import type { IClipboardPayload } from './copyData';
-import { fromEvent, merge } from 'rxjs';
 import { isClipboardEvent, isKeyboardEvent } from '../utils';
 import { getClipboardData, writeClipboardData } from './copyData';
-import { cutSelection } from './cut';
+import { cutSelection, deleteTableSelection } from './cut';
 import { pastePlainText, pasteSelection } from './paste';
+import { pasteImageSrc } from './pasteImage';
 import { CopyType, PasteType } from './types';
 
 class Clipboard {
@@ -22,18 +22,18 @@ class Clipboard {
 
     static create(muya: Muya) {
         const clipboard = new Clipboard(muya);
-        clipboard.listen();
+        clipboard._listen();
 
         return clipboard;
     }
 
     constructor(public muya: Muya) {}
 
-    listen() {
-        const { domNode } = this.muya;
+    private _listen() {
+        const ownsEvent = () => this.muya.hasFocus();
 
         const copyCutHandler = (event: Event) => {
-            if (!isClipboardEvent(event))
+            if (!ownsEvent() || !isClipboardEvent(event))
                 return;
             event.preventDefault();
             event.stopPropagation();
@@ -47,9 +47,17 @@ class Clipboard {
         };
 
         const keydownHandler = (event: Event) => {
-            if (!isKeyboardEvent(event))
+            if (!ownsEvent() || !isKeyboardEvent(event))
                 return;
             const { key, metaKey } = event;
+
+            if (this.selection.table.hasSelection) {
+                if (!metaKey && (key === 'Backspace' || key === 'Delete')) {
+                    event.preventDefault();
+                    deleteTableSelection(this);
+                }
+                return;
+            }
 
             const { isSelectionInSameBlock } = this.selection.getSelection() ?? {};
             if (isSelectionInSameBlock)
@@ -74,15 +82,16 @@ class Clipboard {
         };
 
         const pasteHandler = (event: Event) => {
-            if (isClipboardEvent(event))
+            if (ownsEvent() && isClipboardEvent(event))
                 this.pasteHandler(event);
         };
 
-        merge(fromEvent(domNode, 'copy'), fromEvent(domNode, 'cut'))
-            .subscribe(copyCutHandler);
+        const { eventCenter } = this.muya;
 
-        fromEvent(domNode, 'paste').subscribe(pasteHandler);
-        fromEvent(domNode, 'keydown').subscribe(keydownHandler);
+        eventCenter.attachDOMEvent(document, 'copy', copyCutHandler);
+        eventCenter.attachDOMEvent(document, 'cut', copyCutHandler);
+        eventCenter.attachDOMEvent(document, 'paste', pasteHandler);
+        eventCenter.attachDOMEvent(document, 'keydown', keydownHandler);
     }
 
     getClipboardData(): IClipboardPayload {
@@ -133,7 +142,15 @@ class Clipboard {
             await pastePlainText(this, text);
     }
 
-    async _readClipboardText(): Promise<string> {
+    // Insert an image at the cursor from an explicit `src` (a saved file path or
+    // `data:` URL), routing through `imageAction` like a clipboard image paste.
+    // Drives the macOS screenshot flow, which can no longer use the removed
+    // `document.execCommand('paste')`.
+    pasteImage(src: string): Promise<void> {
+        return pasteImageSrc(this, src);
+    }
+
+    private async _readClipboardText(): Promise<string> {
         // Sandboxed Electron renderers can't reach the system clipboard
         // directly, so the embedder supplies a reader (e.g. an IPC bridge to
         // Electron's native `clipboard`). Fall back to the async Clipboard API

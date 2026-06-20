@@ -462,6 +462,7 @@ const onCustomCssChange = (event: Event): void => {
     }
   }
   & h3 {
+    position: relative;
     margin: 0;
     font-size: 16px;
     color: currentColor;

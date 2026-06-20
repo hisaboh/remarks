@@ -78,7 +78,7 @@ const buildFileUtils = (bootInfo: BootInfo): FileUtilsAPI => ({
   move: (src, dest) => invoke('mt::fs::move', src, dest) as Promise<void>,
   stat: (p) => invoke('mt::fs::stat', p) as Promise<import('@shared/types/files').SerializedStat>,
   writeFile: (p, data) => invoke('mt::fs::write-file', p, toWireData(data)) as Promise<void>,
-  readFile: async (p, encoding) => fromReadResult(await invoke('mt::fs::read-file', p, encoding)),
+  readFile: async(p, encoding) => fromReadResult(await invoke('mt::fs::read-file', p, encoding)),
   pathExists: (p) => invoke('mt::fs::path-exists', p) as Promise<boolean>,
   unlink: (p) => invoke('mt::fs::unlink', p) as Promise<void>,
   readdir: (p) => invoke('mt::fs::readdir', p) as Promise<string[]>,
@@ -163,13 +163,13 @@ const localeModules = import.meta.glob<Record<string, unknown>>(
   { import: 'default' }
 )
 
-const loadLocale = async (language: string): Promise<Record<string, unknown> | undefined> => {
+const loadLocale = async(language: string): Promise<Record<string, unknown> | undefined> => {
   const entry = Object.entries(localeModules).find(([p]) => p.endsWith(`/${language}.json`))
   return entry ? await entry[1]() : undefined
 }
 
 const i18nUtilsAPI: I18nUtilsAPI = {
-  loadTranslations: async (language) =>
+  loadTranslations: async(language) =>
     (await loadLocale(language)) ?? (language === 'en' ? {} : (await loadLocale('en')) ?? {})
 }
 const ripgrepAPI: RipgrepAPI = {
@@ -194,7 +194,7 @@ const fontsAPI: FontsAPI = {
 // theme…). Tauri child windows can't carry a query string across the dev/prod
 // URL base, so each window asks the backend for its args (keyed by window
 // label) and applies them — the main window gets default editor args.
-const applyWindowArgs = async (): Promise<void> => {
+const applyWindowArgs = async(): Promise<void> => {
   const current = new URLSearchParams(window.location.search)
   if (current.has('wid')) return
   const args = (await invoke('mt::window::init-args')) as Record<string, string>
@@ -237,7 +237,7 @@ const registerBootstrapHandshake = (): void => {
 
 // ---- install ----------------------------------------------------------------
 
-export const initPlatform = async (): Promise<void> => {
+export const initPlatform = async(): Promise<void> => {
   const bootInfo = (await invoke('mt::boot-info-async')) as BootInfo
   setCachedBootInfo(bootInfo)
   await applyWindowArgs()

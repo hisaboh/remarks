@@ -6,6 +6,7 @@ import { BLOCK_DOM_PROPERTY, CLASS_NAMES } from '../config';
 import { isHTMLElement, isKeyboardEvent } from '../utils';
 import { getImageInfo, getImageSrc } from '../utils/image';
 import { findContentDOM } from './dom';
+import { SelectionType } from './types';
 
 class ImageSelection {
     selected: IImageSelectionData | null = null;
@@ -56,7 +57,7 @@ class ImageSelection {
             event.preventDefault();
             const { block, ...imageInfo } = selected;
             block.deleteImage(imageInfo);
-            this._selection.activate('text');
+            this._selection.activate(SelectionType.TEXT);
         }
     };
 
@@ -128,10 +129,13 @@ class ImageSelection {
                 imageInfo,
             });
 
-            const imageSelector = `#${imageInfo.imageId}`;
-
-            const imageContainer = document.querySelector(
-                `${imageSelector} .${CLASS_NAMES.MU_IMAGE_CONTAINER}`,
+            // Resolve the image container from the clicked wrapper directly.
+            // Images that share the same src (and paragraph offset) render with
+            // duplicate DOM ids, so a `document.querySelector('#id ...')` lookup
+            // would resolve to the first occurrence and place the resize bar on
+            // the wrong image.
+            const imageContainer = imageWrapper.querySelector(
+                `.${CLASS_NAMES.MU_IMAGE_CONTAINER}`,
             );
 
             eventCenter.emit('muya-transformer', {

@@ -1,3 +1,4 @@
+import type { IBulletListState, IOrderListState, TState } from '../types';
 import { describe, expect, it } from 'vitest';
 import { MarkdownToState } from '../markdownToState';
 import ExportMarkdown from '../stateToMarkdown';
@@ -265,5 +266,164 @@ sep
             1. foo
 `;
         expect(roundTrip(md, 'dfm')).toBe(md);
+    });
+
+    // Characterization test, NOT a spec for desired behavior.
+    //
+    // The desktop preferences UI offers a `'tab'` option for list indentation
+    // (prefComponents/markdown/config.ts), but neither this engine nor the
+    // legacy muyajs engine ever implemented it. stateToMarkdown's constructor
+    // only branches on `'dfm'` and `typeof === 'number'`; any other value
+    // (including `'tab'`) falls through to the `else` and yields a 1-space
+    // indent (_listIndentationCount = 1). The TODO in stateToMarkdown.ts
+    // (mirrored verbatim from muyajs/lib/utils/exportMarkdown.js) records why:
+    // the serializer builds every indent out of spaces, and the author left
+    // mixing real tabs with those space-based indents (blockquote prefixes,
+    // subsequent-paragraph alignment) as "work for another day".
+    //
+    // This test pins that degraded-to-1-space behavior so it can't change
+    // silently. If `'tab'` ever gets a real implementation, this assertion
+    // SHOULD fail — replace it with the proper tab-indent fixture then.
+    it('treats the unimplemented \'tab\' option as a 1-space indent', () => {
+        const md = `start
+
+- foo
+- foo
+  - foo
+  - foo
+    - foo
+    - foo
+      - foo
+  - foo
+- foo
+
+sep
+
+1. foo
+2. foo
+   1. foo
+   2. foo
+      1. foo
+   3. foo
+3. foo
+   20. foo
+       141. foo
+            1. foo
+`;
+        // Identical to the 1-space fixture above, and identical to what
+        // listIndentation = 1 produces — confirming 'tab' is silently coerced.
+        expect(roundTrip(md, 'tab')).toBe(md);
+        expect(roundTrip(md, 'tab')).toBe(roundTrip(md, 1));
+    });
+});
+
+// stateToMarkdown reads `loose` straight off the list meta. In a real boot
+// that flag is seeded from `muya.options.preferLooseListItem` at list
+// creation time (see block/base/format.ts `_convertToList`); here we drive the
+// serializer directly with both flag values to lock in the exact spacing the
+// option controls. A loose list separates every item with a blank line; a
+// tight list does not.
+describe('stateToMarkdown — list looseness (preferLooseListItem)', () => {
+    function serialize(states: TState[]): string {
+        return new ExportMarkdown({ listIndentation: 1 }).generate(states);
+    }
+
+    function bulletList(loose: boolean): IBulletListState {
+        return {
+            name: 'bullet-list',
+            meta: { marker: '-', loose },
+            children: [
+                { name: 'list-item', children: [{ name: 'paragraph', text: 'foo' }] },
+                { name: 'list-item', children: [{ name: 'paragraph', text: 'bar' }] },
+                { name: 'list-item', children: [{ name: 'paragraph', text: 'baz' }] },
+            ],
+        };
+    }
+
+    it('inserts blank lines between items when loose is true', () => {
+        expect(serialize([bulletList(true)])).toBe('- foo\n\n- bar\n\n- baz\n');
+    });
+
+    it('keeps items adjacent (no blank lines) when loose is false', () => {
+        expect(serialize([bulletList(false)])).toBe('- foo\n- bar\n- baz\n');
+    });
+
+    it('list meta.loose carries the preferLooseListItem flag verbatim', () => {
+        // The serializer is the only consumer of meta.loose; assert the round
+        // contract by parsing a canonical loose list and reading the flag back.
+        const looseStates = new MarkdownToState({
+            footnote: false,
+            math: false,
+            isGitlabCompatibilityEnabled: false,
+            trimUnnecessaryCodeBlockEmptyLines: false,
+            frontMatter: false,
+        }).generate('- foo\n\n- bar\n');
+        const list = looseStates[0] as IBulletListState;
+        expect(list.name).toBe('bullet-list');
+        expect(list.meta.loose).toBe(true);
+
+        const tightStates = new MarkdownToState({
+            footnote: false,
+            math: false,
+            isGitlabCompatibilityEnabled: false,
+            trimUnnecessaryCodeBlockEmptyLines: false,
+            frontMatter: false,
+        }).generate('- foo\n- bar\n');
+        const tightList = tightStates[0] as IBulletListState;
+        expect(tightList.meta.loose).toBe(false);
+    });
+});
+
+// Ordered-list start number is preserved through the markdown round-trip, and
+// the per-item number is computed by incrementing `meta.start` (see
+// stateToMarkdown.ts `serializeListItem`). The delimiter (`.` or `)`) likewise
+// comes from `meta.delimiter`, which a real boot seeds from
+// `muya.options.orderListDelimiter`.
+describe('stateToMarkdown — ordered list start + delimiter', () => {
+    function serialize(states: TState[]): string {
+        return new ExportMarkdown({ listIndentation: 1 }).generate(states);
+    }
+
+    it('keeps a non-1 start number through the round-trip', () => {
+        // The parser stores start=3; the serializer renders 3., 4. (start + i).
+        expect(roundTrip('3. one\n4. two\n')).toBe('3. one\n4. two\n');
+    });
+
+    it('parses the start number into order-list meta.start', () => {
+        const states = new MarkdownToState({
+            footnote: false,
+            math: false,
+            isGitlabCompatibilityEnabled: false,
+            trimUnnecessaryCodeBlockEmptyLines: false,
+            frontMatter: false,
+        }).generate('3. one\n4. two\n');
+        const list = states[0] as IOrderListState;
+        expect(list.name).toBe('order-list');
+        expect(list.meta.start).toBe(3);
+        expect(list.meta.delimiter).toBe('.');
+    });
+
+    it('emits the configured delimiter (")") for an ordered list', () => {
+        const states: IOrderListState[] = [{
+            name: 'order-list',
+            meta: { start: 1, loose: false, delimiter: ')' },
+            children: [
+                { name: 'list-item', children: [{ name: 'paragraph', text: 'one' }] },
+                { name: 'list-item', children: [{ name: 'paragraph', text: 'two' }] },
+            ],
+        }];
+        expect(serialize(states)).toBe('1) one\n2) two\n');
+    });
+
+    it('combines a non-1 start with the ")" delimiter', () => {
+        const states: IOrderListState[] = [{
+            name: 'order-list',
+            meta: { start: 5, loose: false, delimiter: ')' },
+            children: [
+                { name: 'list-item', children: [{ name: 'paragraph', text: 'one' }] },
+                { name: 'list-item', children: [{ name: 'paragraph', text: 'two' }] },
+            ],
+        }];
+        expect(serialize(states)).toBe('5) one\n6) two\n');
     });
 });

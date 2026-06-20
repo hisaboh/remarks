@@ -4,7 +4,7 @@ import type {
     TextToken,
     Token,
 } from '../../inlineRenderer/types';
-import type { ICursor } from '../../selection/types';
+import type { IContentCursor, IRenderCursor } from '../../selection/types';
 import type { IBulletListState, IListItemState, IOrderListState, IParagraphState } from '../../state/types';
 import type { Nullable } from '../../types';
 import type { IImageInfo } from '../../utils/image';
@@ -58,6 +58,39 @@ const INLINE_UPDATE_FRAGMENTS = [
 
 const INLINE_UPDATE_REG = new RegExp(INLINE_UPDATE_FRAGMENTS.join('|'), 'i');
 
+// Offset of the cursor relative to a symmetric/asymmetric marker pair
+// (strong/em/code/math/html_tag). `open`/`close` are the opening/closing
+// marker lengths; for the symmetric inline markers they are equal.
+function markeredOffset(dis: number, len: number, open: number, close: number) {
+    if (dis < 0)
+        return 0;
+    if (dis < open)
+        return -dis;
+    if (dis <= len - close)
+        return -open;
+    if (dis <= len)
+        return len - dis - open - close;
+    return -open - close;
+}
+
+function linkOffset(dis: number, anchorLen: number) {
+    if (dis < 1)
+        return 0;
+    if (dis <= 1 + anchorLen)
+        return -1;
+    return anchorLen - dis;
+}
+
+function imageOffset(dis: number, altLen: number) {
+    if (dis < 1)
+        return 0;
+    if (dis < 2)
+        return -1;
+    if (dis <= 2 + altLen)
+        return -2;
+    return altLen - dis;
+}
+
 function getOffset(offset: number, token: Token) {
     const {
         range: { start, end },
@@ -76,74 +109,30 @@ function getOffset(offset: number, token: Token) {
         case 'inline_code':
 
         case 'inline_math': {
-            const MARKER_LEN = type === 'strong' || type === 'del' ? 2 : 1;
-            if (dis < 0)
-                return 0;
-            if (dis >= 0 && dis < MARKER_LEN)
-                return -dis;
-            if (dis >= MARKER_LEN && dis <= len - MARKER_LEN)
-                return -MARKER_LEN;
-            if (dis > len - MARKER_LEN && dis <= len)
-                return len - dis - 2 * MARKER_LEN;
-            if (dis > len)
-                return -2 * MARKER_LEN;
-
-            break;
+            const markerLen = type === 'strong' || type === 'del' ? 2 : 1;
+            return markeredOffset(dis, len, markerLen, markerLen);
         }
 
         case 'html_tag': {
             const { tag } = token;
             // handle underline, sup, sub
-            const OPEN_MARKER_LEN = FORMAT_TAG_MAP[tag].open.length;
-            const CLOSE_MARKER_LEN = FORMAT_TAG_MAP[tag].close.length;
-
-            if (dis < 0)
-                return 0;
-            if (dis >= 0 && dis < OPEN_MARKER_LEN)
-                return -dis;
-            if (dis >= OPEN_MARKER_LEN && dis <= len - CLOSE_MARKER_LEN)
-                return -OPEN_MARKER_LEN;
-            if (dis > len - CLOSE_MARKER_LEN && dis <= len)
-                return len - dis - OPEN_MARKER_LEN - CLOSE_MARKER_LEN;
-            if (dis > len)
-                return -OPEN_MARKER_LEN - CLOSE_MARKER_LEN;
-
-            break;
+            return markeredOffset(
+                dis,
+                len,
+                FORMAT_TAG_MAP[tag].open.length,
+                FORMAT_TAG_MAP[tag].close.length,
+            );
         }
 
-        case 'link': {
-            const { anchor } = token;
-            const MARKER_LEN = 1;
+        case 'link':
+            return linkOffset(dis, token.anchor.length);
 
-            if (dis < MARKER_LEN)
-                return 0;
-            if (dis >= MARKER_LEN && dis <= MARKER_LEN + anchor.length)
-                return -1;
-            if (dis > MARKER_LEN + anchor.length)
-                return anchor.length - dis;
-
-            break;
-        }
-
-        case 'image': {
-            const { alt } = token;
-            const MARKER_LEN = 1;
-
-            if (dis < MARKER_LEN)
-                return 0;
-            if (dis >= MARKER_LEN && dis < MARKER_LEN * 2)
-                return -1;
-            if (dis >= MARKER_LEN * 2 && dis <= MARKER_LEN * 2 + alt.length)
-                return -2;
-            if (dis > MARKER_LEN * 2 + alt.length)
-                return alt.length - dis;
-
-            break;
-        }
+        case 'image':
+            return imageOffset(dis, token.alt.length);
     }
 }
 
-function clearFormat(token: Token, cursor: ICursor) {
+function clearFormat(token: Token, cursor: IContentCursor) {
     switch (token.type) {
         case 'strong':
 
@@ -300,7 +289,7 @@ class Format extends Content {
     }
 
     // TODO: @JOCS remove use this.selection directly
-    checkNeedRender(cursor: ICursor = this.selection as ICursor) {
+    checkNeedRender(cursor: IRenderCursor = { anchor: this.selection.anchor ?? undefined, focus: this.selection.focus ?? undefined }) {
         const { labels } = this.inlineRenderer;
         const { text } = this;
         const { start: cStart, end: cEnd, anchor, focus } = cursor;
@@ -439,7 +428,12 @@ class Format extends Content {
 
         const selector = `#${imageId.includes('_') ? imageId : `${imageId}_${token.range.start}`
         } img`;
-        const image: Nullable<HTMLElement> = document.querySelector<HTMLElement>(selector);
+        // Scope the lookup to this block: identical-src images share a DOM id,
+        // so a document-wide query would re-click the first occurrence. Within a
+        // single block the `_${range.start}` suffix is unique.
+        const image: Nullable<HTMLElement>
+            = this.domNode?.querySelector<HTMLElement>(selector)
+                ?? document.querySelector<HTMLElement>(selector);
 
         if (image)
             image.click();
@@ -513,7 +507,6 @@ class Format extends Content {
 
             const cursor = Object.assign({}, currentCursor, {
                 block: this,
-                path: this.path,
             });
 
             // TODO: The codes bellow maybe is wrong? and remove use this.selection directly
@@ -525,7 +518,7 @@ class Format extends Content {
             if (needRender)
                 this.update(cursor);
 
-            this.selection.setSelection(cursor);
+            this.setCursor(currentCursor.anchor.offset, currentCursor.focus.offset);
 
             // Check and show format picker
             if (cursor.start.offset !== cursor.end.offset) {
@@ -560,12 +553,12 @@ class Format extends Content {
             || focus.offset !== oldFocus?.offset
         ) {
             const needUpdate = this.checkNeedRender({ anchor, focus });
-            const cursor = { anchor, focus, block: this, path: this.path };
+            const cursor = { anchor, focus, block: this };
 
             if (needUpdate)
                 this.update(cursor);
 
-            this.selection.setSelection(cursor);
+            this.setCursor(anchor.offset, focus.offset);
         }
 
         // Check not edit emoji
@@ -640,7 +633,6 @@ class Format extends Content {
         this.text = text;
 
         const cursor = {
-            path: this.path,
             block: this,
             anchor: {
                 offset: start.offset,
@@ -655,7 +647,7 @@ class Format extends Content {
         if (checkMarkedUpdate || needRender)
             this.update(cursor);
 
-        this.selection.setSelection(cursor);
+        this.setCursor(start.offset, end.offset);
         // check edit emoji
         if (
             inputType !== 'insertFromPaste'
@@ -678,7 +670,12 @@ class Format extends Content {
             }
         }
 
-        // Check block convert if needed, and table cell no need to check.
+        this.checkInlineUpdate();
+    }
+
+    // Re-evaluate this block's type from its text (a leading `# `, `- `, `> `…
+    // promotes/demotes it). Table cells never reinterpret their text as markdown.
+    checkInlineUpdate(): void {
         if (this.blockName !== 'table.cell.content')
             this._convertIfNeeded();
     }
@@ -713,7 +710,7 @@ class Format extends Content {
                 break;
 
             case !!taskList:
-                this.convertToTaskList();
+                this._convertToTaskList();
                 break;
 
             case !!atxHeading:
@@ -876,10 +873,10 @@ class Format extends Content {
         // convert `[*-+] \[[xX ]\] ` to task list.
         const TASK_LIST_REG = /^\[[x ]\] {1,4}/i;
         if (TASK_LIST_REG.test(firstContent.text))
-            firstContent.convertToTaskList();
+            firstContent._convertToTaskList();
     }
 
-    convertToTaskList() {
+    private _convertToTaskList() {
         const { text, parent, muya, hasSelection } = this;
         const { preferLooseListItem } = muya.options;
         const listItem = parent!.parent!;
@@ -1259,7 +1256,7 @@ class Format extends Content {
     }
 
     // Paragraph
-    convertToParagraph(force = false) {
+    protected convertToParagraph(force = false) {
         if (
             !force
             && (this.parent!.blockName === 'setext-heading'
@@ -1480,7 +1477,7 @@ class Format extends Content {
         needRemovedBlock!.remove();
     }
 
-    shiftEnterHandler(event: Event): void {
+    protected shiftEnterHandler(event: Event): void {
         event.preventDefault();
         event.stopPropagation();
 
@@ -1514,7 +1511,7 @@ class Format extends Content {
         cursorBlock.setCursor(0, 0, true);
     }
 
-    getFormatsInRange(cursor = this.getCursor()) {
+    getFormatsInRange(cursor: IContentCursor | null = this.getCursor()) {
         if (cursor == null)
             return { formats: [], tokens: [], neighbors: [] };
 
@@ -1586,7 +1583,7 @@ class Format extends Content {
         // cache delta
         if (type === 'clear') {
             for (const neighbor of neighbors)
-                clearFormat(neighbor, { start, end });
+                clearFormat(neighbor, cursor);
 
             start.offset += start.delta;
             end.offset += end.delta;
@@ -1595,7 +1592,7 @@ class Format extends Content {
         }
         else if (currentFormats.length) {
             for (const token of currentFormats)
-                clearFormat(token, { start, end });
+                clearFormat(token, cursor);
 
             start.offset += start.delta;
             end.offset += end.delta;
@@ -1604,7 +1601,7 @@ class Format extends Content {
         else {
             if (currentNeighbors.length) {
                 for (const neighbor of currentNeighbors)
-                    clearFormat(neighbor, { start, end });
+                    clearFormat(neighbor, cursor);
             }
 
             start.offset += start.delta;
@@ -1664,26 +1661,18 @@ class Format extends Content {
             case 'inline_math': {
                 const MARKER = FORMAT_MARKER_MAP[type];
                 const oldText = this.text;
-                const wasCollapsed = start.offset === end.offset;
                 this.text
                     = oldText.substring(0, start.offset)
                         + MARKER
                         + oldText.substring(start.offset, end.offset)
                         + MARKER
                         + oldText.substring(end.offset);
-                if (wasCollapsed) {
-                    // Toggle-format-then-type: keep caret between markers
-                    // so the next keystroke is captured INSIDE the format.
-                    start.offset += MARKER.length;
-                    end.offset += MARKER.length;
-                }
-                else {
-                    // When wrapping a non-empty selection, collapse the caret
-                    // PAST the closing marker so the next keystroke lands
-                    // outside the format instead of extending it.
-                    end.offset += MARKER.length * 2;
-                    start.offset = end.offset;
-                }
+                // Shift both offsets past the opening marker. A collapsed
+                // cursor stays between the markers (toggle-then-type lands
+                // INSIDE the format); a non-empty selection keeps the
+                // original text selected now that it sits inside the markers.
+                start.offset += MARKER.length;
+                end.offset += MARKER.length;
                 break;
             }
 
@@ -1696,21 +1685,17 @@ class Format extends Content {
             case 'u': {
                 const MARKER = FORMAT_TAG_MAP[type];
                 const oldText = this.text;
-                const wasCollapsed = start.offset === end.offset;
                 this.text
                     = oldText.substring(0, start.offset)
                         + MARKER.open
                         + oldText.substring(start.offset, end.offset)
                         + MARKER.close
                         + oldText.substring(end.offset);
-                if (wasCollapsed) {
-                    start.offset += MARKER.open.length;
-                    end.offset += MARKER.open.length;
-                }
-                else {
-                    end.offset += MARKER.open.length + MARKER.close.length;
-                    start.offset = end.offset;
-                }
+                // Shift both offsets past the opening tag: a collapsed cursor
+                // stays between the tags, a non-empty selection keeps the
+                // wrapped text selected.
+                start.offset += MARKER.open.length;
+                end.offset += MARKER.open.length;
                 break;
             }
 

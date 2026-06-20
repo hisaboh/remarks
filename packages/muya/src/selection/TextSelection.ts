@@ -1,8 +1,10 @@
 import type Content from '../block/base/content';
 import type Format from '../block/base/format';
+import type { TBlockPath } from '../block/types';
 import type { Muya } from '../muya';
+import type { Nullable } from '../types';
 import type Selection from './index';
-import type { ICursor, INodeOffset, ISelection } from './types';
+import type { IAnchorFocusInfo, INodeOffset, ISelection } from './types';
 import { BLOCK_DOM_PROPERTY } from '../config';
 import { isHTMLElement, isMouseEvent } from '../utils';
 import {
@@ -16,19 +18,50 @@ import {
     getNodeAndOffset,
     getOffsetOfParagraph,
 } from './dom';
+import { SelectionCaretType, SelectionDirection, SelectionType } from './types';
+
+function computeDirection(
+    anchorBlock: Content,
+    focusBlock: Content,
+    anchorOffset: number,
+    focusOffset: number,
+    isSelectionInSameBlock: boolean,
+): SelectionDirection {
+    if (isSelectionInSameBlock) {
+        return anchorOffset < focusOffset
+            ? SelectionDirection.FORWARD
+            : SelectionDirection.BACKWARD;
+    }
+
+    return compareParagraphsOrder(anchorBlock.domNode!, focusBlock.domNode!)
+        ? SelectionDirection.FORWARD
+        : SelectionDirection.BACKWARD;
+}
+
+function computeCaretType(
+    anchorBlock: Nullable<Content>,
+    focusBlock: Nullable<Content>,
+    isCollapsed: boolean,
+): SelectionCaretType {
+    if (!anchorBlock && !focusBlock)
+        return SelectionCaretType.NONE;
+
+    return isCollapsed ? SelectionCaretType.CARET : SelectionCaretType.RANGE;
+}
 
 class TextSelection {
-    public doc: Document = document;
-    public anchorPath: (string | number)[] = [];
-    public anchorBlock: Content | null = null;
-    public focusPath: (string | number)[] = [];
-    public focusBlock: Content | null = null;
-    public anchor: INodeOffset | null = null;
-    public focus: INodeOffset | null = null;
+    public anchorPath: TBlockPath = [];
+    public anchorBlock: Nullable<Content> = null;
+    public focusPath: TBlockPath = [];
+    public focusBlock: Nullable<Content> = null;
+    public anchor: Nullable<INodeOffset> = null;
+    public focus: Nullable<INodeOffset> = null;
+
+    private _doc: Document = document;
 
     private _selectInfo: {
         isSelect: boolean;
-        selection: ICursor | null;
+        selection: { anchor: IAnchorFocusInfo; focus: IAnchorFocusInfo } | null;
     } = {
         isSelect: false,
         selection: null,
@@ -38,92 +71,88 @@ class TextSelection {
         this._listenSelectActions();
     }
 
-    get scrollPage() {
+    private get _scrollPage() {
         return this._muya.editor.scrollPage;
     }
 
-    get isCollapsed() {
+    private get _isCollapsed() {
         const { anchorBlock, focusBlock, anchor, focus } = this;
 
-        if (anchor === null || focus === null)
+        if (anchor == null || focus == null)
             return false;
 
         return anchorBlock === focusBlock && anchor.offset === focus.offset;
     }
 
     get isSelectionInSameBlock() {
-        const { anchorBlock, focusBlock, anchor } = this;
+        const { anchorBlock, focusBlock, anchor, focus } = this;
 
-        if (anchor === null || focus === null)
+        if (anchor == null || focus == null)
             return false;
 
         return anchorBlock === focusBlock;
     }
 
-    get direction() {
+    private get _direction() {
         const {
             anchor,
             focus,
             anchorBlock,
             focusBlock,
             isSelectionInSameBlock,
-            isCollapsed,
+            _isCollapsed: isCollapsed,
         } = this;
-        if (anchor === null || focus === null || !anchorBlock || !focusBlock)
-            return 'none';
+        if (anchor == null || focus == null || !anchorBlock || !focusBlock)
+            return SelectionDirection.NONE;
 
         if (isCollapsed)
-            return 'none';
+            return SelectionDirection.NONE;
 
-        if (isSelectionInSameBlock) {
-            return anchor.offset < focus.offset ? 'forward' : 'backward';
-        }
-        else {
-            const aDom = anchorBlock.domNode!;
-            const fDom = focusBlock.domNode!;
-            const order = compareParagraphsOrder(aDom, fDom);
-
-            return order ? 'forward' : 'backward';
-        }
+        return computeDirection(
+            anchorBlock,
+            focusBlock,
+            anchor.offset,
+            focus.offset,
+            isSelectionInSameBlock,
+        );
     }
 
-    get type() {
-        const { anchorBlock, focusBlock, isCollapsed } = this;
-        if (!anchorBlock && !focusBlock)
-            return 'None';
+    private get _type() {
+        const { anchorBlock, focusBlock, _isCollapsed: isCollapsed } = this;
 
-        return isCollapsed ? 'Caret' : 'Range';
+        return computeCaretType(anchorBlock, focusBlock, isCollapsed);
     }
 
     collapse(): void {
-        this.setSelection({ anchor: null, focus: null });
+        this.anchor = null;
+        this.focus = null;
+        this.anchorBlock = null;
+        this.focusBlock = null;
+        this.anchorPath = [];
+        this.focusPath = [];
+        this._updateSelection();
+        this._emitSelectionChange();
     }
 
     selectAllContent() {
-        const { scrollPage } = this;
+        const { _scrollPage: scrollPage } = this;
         const aBlock = scrollPage?.firstContentInDescendant();
         const fBlock = scrollPage?.lastContentInDescendant();
 
         if (aBlock == null || fBlock == null)
             return;
 
-        const cursor: ICursor = {
-            anchor: { offset: 0 },
-            focus: { offset: fBlock.text.length },
-            anchorBlock: aBlock,
-            anchorPath: aBlock.path,
-            focusBlock: fBlock,
-            focusPath: fBlock.path,
-        };
-
-        this.setSelection(cursor);
-        const activeEle = this.doc.activeElement;
+        this.setSelection(
+            { offset: 0, block: aBlock, path: aBlock.path },
+            { offset: fBlock.text.length, block: fBlock, path: fBlock.path },
+        );
+        const activeEle = this._doc.activeElement;
         if (isHTMLElement(activeEle) && activeEle.classList.contains('mu-content'))
             activeEle.blur();
     }
 
     getSelection(): ISelection | null {
-        const selection = document.getSelection();
+        const selection = this._doc.getSelection();
 
         if (!selection)
             return null;
@@ -146,40 +175,30 @@ class TextSelection {
         // crashing — the caller treats null the same as "no selection".
         if (!anchorBlock || !focusBlock)
             return null;
+
         const anchorPath = anchorBlock.path;
         const focusPath = focusBlock.path;
 
-        const aOffset
-            = getOffsetOfParagraph(anchorNode, anchorDomNode) + anchorOffset;
+        const aOffset = getOffsetOfParagraph(anchorNode, anchorDomNode) + anchorOffset;
         const fOffset = getOffsetOfParagraph(focusNode, focusDomNode) + focusOffset;
         const anchor = { offset: aOffset };
         const focus = { offset: fOffset };
 
-        const isCollapsed
-            = anchorBlock === focusBlock && anchor.offset === focus.offset;
-
+        const isCollapsed = anchorBlock === focusBlock && anchor.offset === focus.offset;
         const isSelectionInSameBlock = anchorBlock === focusBlock;
-        let direction: string;
 
-        if (isSelectionInSameBlock) {
-            direction = anchor.offset < focus.offset ? 'forward' : 'backward';
-        }
-        else {
-            const aDom = anchorBlock.domNode!;
-            const fDom = focusBlock.domNode!;
-            const order = compareParagraphsOrder(aDom, fDom);
-            direction = order ? 'forward' : 'backward';
-        }
-
-        const type = isCollapsed ? 'Caret' : 'Range';
+        const direction = computeDirection(
+            anchorBlock,
+            focusBlock,
+            anchor.offset,
+            focus.offset,
+            isSelectionInSameBlock,
+        );
+        const type = computeCaretType(anchorBlock, focusBlock, isCollapsed);
 
         return {
-            anchor,
-            focus,
-            anchorBlock,
-            anchorPath,
-            focusBlock,
-            focusPath,
+            anchor: { offset: anchor.offset, block: anchorBlock, path: anchorPath },
+            focus: { offset: focus.offset, block: focusBlock, path: focusPath },
             isCollapsed,
             isSelectionInSameBlock,
             direction,
@@ -187,37 +206,28 @@ class TextSelection {
         };
     }
 
-    setSelection({
-        anchor,
-        focus,
-        block,
-        path,
-        anchorBlock,
-        anchorPath,
-        focusBlock,
-        focusPath,
-    }: ICursor) {
-        this.anchor = anchor ?? null;
-        this.focus = focus ?? null;
-        this.anchorBlock = anchorBlock ?? block ?? null;
-        this.anchorPath = anchorPath ?? path ?? [];
-        this.focusBlock = focusBlock ?? block ?? null;
-        this.focusPath = focusPath ?? path ?? [];
-        this._setCursor();
+    setSelection(anchor: IAnchorFocusInfo, focus: IAnchorFocusInfo) {
+        this.anchor = { offset: anchor.offset };
+        this.anchorBlock = anchor.block;
+        this.anchorPath = anchor.path;
+        this.focus = { offset: focus.offset };
+        this.focusBlock = focus.block;
+        this.focusPath = focus.path;
+        this._updateSelection();
+        this._emitSelectionChange();
+    }
 
-        const {
-            isCollapsed,
-            isSelectionInSameBlock,
-            direction,
-            type,
-        } = this;
+    private _emitSelectionChange() {
+        const { _isCollapsed: isCollapsed, isSelectionInSameBlock, _direction: direction, _type: type } = this;
+        const anchorBlock = this.anchorBlock ?? null;
+        const focusBlock = this.focusBlock ?? null;
 
         // Follow the caret (focus end) for forward selections so typewriter
         // scrolling tracks the cursor rather than the selection start.
-        const cursorCoords = getCursorCoords(direction === 'forward');
+        const cursorCoords = getCursorCoords(direction === SelectionDirection.FORWARD);
         // Duck-type the Format block — a value import of Format here would
         // create a selection -> format circular dependency.
-        const anchorBlockRef = this.anchorBlock as Format | null;
+        const anchorBlockRef = anchorBlock as Format | null;
         const formats
             = isSelectionInSameBlock
                 && anchorBlockRef
@@ -225,32 +235,26 @@ class TextSelection {
                 ? anchorBlockRef.getFormatsInRange().formats
                 : [];
 
-        const affiliation = buildSelectionAffiliation(
-            this.anchorBlock,
-            this.focusBlock,
-        );
-        const anchorBlockInfo = endpointBlockInfo(this.anchorBlock);
-        const focusBlockInfo = endpointBlockInfo(this.focusBlock);
+        const affiliation = buildSelectionAffiliation(anchorBlock, focusBlock);
 
         this._muya.eventCenter.emit('selection-change', {
-            anchor,
-            focus,
+            anchor: this.anchor,
+            focus: this.focus,
             anchorBlock,
-            anchorPath,
+            anchorPath: this.anchorPath,
             focusBlock,
-            focusPath,
+            focusPath: this.focusPath,
             isCollapsed,
             isSelectionInSameBlock,
             direction,
             type,
-            kind: 'text',
-            selection: this,
+            kind: SelectionType.TEXT,
             selectedImage: this._selection.image,
             cursorCoords,
             formats,
             affiliation,
-            anchorBlockInfo,
-            focusBlockInfo,
+            anchorBlockInfo: endpointBlockInfo(anchorBlock),
+            focusBlockInfo: endpointBlockInfo(focusBlock),
         });
     }
 
@@ -266,7 +270,7 @@ class TextSelection {
 
         const handleMouseupOrLeave = () => {
             if (this._selectInfo.selection)
-                this.setSelection(this._selectInfo.selection);
+                this.setSelection(this._selectInfo.selection.anchor, this._selectInfo.selection.focus);
 
             this._selectInfo = {
                 isSelect: false,
@@ -289,31 +293,21 @@ class TextSelection {
             if (!selection)
                 return;
 
-            const {
-                anchor,
-                focus,
-                anchorBlock,
-                focusBlock,
-                isSelectionInSameBlock,
-            } = selection;
+            const { anchor, focus, isSelectionInSameBlock } = selection;
 
             if (isSelectionInSameBlock) {
                 return;
             }
 
-            const newSelection = {
-                anchor,
-                focus,
-                anchorBlock,
-                focusBlock,
-                anchorPath: anchorBlock.path,
-                focusPath: focusBlock.path,
-            };
+            const anchorBlock = anchor.block;
+            const focusBlock = focus.block;
+            const endpointAnchor = { offset: anchor.offset, block: anchorBlock, path: anchorBlock.path };
+            const endpointFocus = { offset: focus.offset, block: focusBlock, path: focusBlock.path };
 
             if (type === 'mousemove')
-                this._selectInfo.selection = newSelection;
+                this._selectInfo.selection = { anchor: endpointAnchor, focus: endpointFocus };
             else
-                this.setSelection(newSelection);
+                this.setSelection(endpointAnchor, endpointFocus);
         };
 
         eventCenter.attachDOMEvent(domNode, 'mousedown', handleMousedown);
@@ -324,7 +318,7 @@ class TextSelection {
     }
 
     private _selectRange(range: Range) {
-        const selection = this.doc.getSelection();
+        const selection = this._doc.getSelection();
 
         if (selection) {
             selection.removeAllRanges();
@@ -338,7 +332,7 @@ class TextSelection {
         endNode?: Node,
         endOffset?: number,
     ) {
-        const range = this.doc.createRange();
+        const range = this._doc.createRange();
         range.setStart(startNode, startOffset);
         if (endNode && typeof endOffset === 'number')
             range.setEnd(endNode, endOffset);
@@ -351,12 +345,12 @@ class TextSelection {
     }
 
     private _setFocus(focusNode: Node, focusOffset: number) {
-        const selection = this.doc.getSelection();
+        const selection = this._doc.getSelection();
         if (selection)
             selection.extend(focusNode, focusOffset);
     }
 
-    private _setCursor() {
+    private _updateSelection() {
         const {
             anchor,
             focus,
@@ -364,11 +358,12 @@ class TextSelection {
             anchorPath,
             focusBlock,
             focusPath,
-            scrollPage,
+            _scrollPage: scrollPage,
         } = this;
 
         if (!anchor || !focus) {
-            const selection = this.doc.getSelection();
+            const selection = this._doc.getSelection();
+
             if (selection)
                 selection.removeAllRanges();
 

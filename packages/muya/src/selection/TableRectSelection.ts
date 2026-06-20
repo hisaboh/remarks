@@ -28,12 +28,12 @@ class TableRectSelection {
 
     static create(muya: Muya): TableRectSelection {
         const instance = new TableRectSelection(muya);
-        instance.attach();
+        instance._attach();
 
         return instance;
     }
 
-    constructor(public muya: Muya) {}
+    constructor(private _muya: Muya) {}
 
     get hasSelection(): boolean {
         return this._table != null && this._anchor != null && this._focus != null;
@@ -80,8 +80,14 @@ class TableRectSelection {
             column: focusCell.columnOffset,
         };
         this._isSelecting = true;
-        this._collapseCaretToAnchor();
+        this._freezeNativeSelection();
         this._renderHighlight();
+    }
+
+    selectWholeTable(): void {
+        const table = this._table;
+        if (table)
+            this.selectTable(table);
     }
 
     selectSingleCell(cell: TableBodyCell): void {
@@ -96,12 +102,12 @@ class TableRectSelection {
         this._anchor = position;
         this._focus = position;
         this._isSelecting = true;
-        this._collapseCaretToAnchor();
+        this._freezeNativeSelection();
         this._renderHighlight();
     }
 
-    attach(): void {
-        const { eventCenter, domNode } = this.muya;
+    private _attach(): void {
+        const { eventCenter, domNode } = this._muya;
         eventCenter.attachDOMEvent(domNode, 'mousedown', this._onMouseDown);
     }
 
@@ -123,7 +129,7 @@ class TableRectSelection {
         this._focus = position;
         this._isSelecting = false;
 
-        const { eventCenter } = this.muya;
+        const { eventCenter } = this._muya;
         this._dragEventIds.push(
             eventCenter.attachDOMEvent(document, 'mousemove', this._onMouseMove),
             eventCenter.attachDOMEvent(document, 'mouseup', this._onMouseUp),
@@ -146,19 +152,13 @@ class TableRectSelection {
             && !this._isSelecting
         ) {
             this._isSelecting = true;
-            // Collapse the native text range to a caret in the anchor cell so
-            // the rectangle highlight is the only visible *range* selection,
-            // while the editor stays focused — copy/cut events fire only on the
-            // focused element, so a full blur would break the clipboard.
-            this._collapseCaretToAnchor();
+            this._freezeNativeSelection();
         }
 
         if (!this._isSelecting)
             return;
 
-        // The browser keeps trying to extend a native text selection during the
-        // drag; collapse it again each move so only the cell rectangle shows.
-        this._collapseCaretToAnchor();
+        this._suppressNativeRange();
 
         // Off-table moves null the focus, so releasing outside the table
         // cancels the selection rather than freezing a 1×1 anchor-cell range.
@@ -175,16 +175,19 @@ class TableRectSelection {
             this.clear();
     };
 
-    private _collapseCaretToAnchor(): void {
-        const content = this._anchor?.cell.firstChild;
-        if (content && content.isContent())
-            content.setCursor(0, 0, false);
+    private _freezeNativeSelection(): void {
+        document.getSelection()?.removeAllRanges();
+        this._muya.domNode.focus();
+        this._muya.editor.activeContentBlock = null;
+        this._muya.ui.hideAllFloatTools();
+    }
 
-        this.muya.ui.hideAllFloatTools();
+    private _suppressNativeRange(): void {
+        document.getSelection()?.removeAllRanges();
     }
 
     private _detachDragEvents(): void {
-        const { eventCenter } = this.muya;
+        const { eventCenter } = this._muya;
         for (const id of this._dragEventIds)
             eventCenter.detachDOMEvent(id);
 
@@ -261,7 +264,7 @@ class TableRectSelection {
 
     /**
      * The selected rectangle as an `ITableState` sub-table, or `null` when there
-     * is no frozen selection. The clipboard serialises this to GFM markdown.
+     * is no frozen selection. The clipboard serializes this to GFM markdown.
      */
     getStateForCopy(): Nullable<ITableState> {
         if (!this.hasSelection)
@@ -280,24 +283,44 @@ class TableRectSelection {
      * content block's `text` setter so each edit dispatches a json op and the
      * document state stays in sync. The caret is placed in the anchor cell.
      */
-    clearSelectedCells(): void {
+    /**
+     * Empty every selected cell's text and re-render it, keeping the frozen
+     * selection. Returns whether any cell actually had content to clear — the
+     * caller uses that to drive the two-stage keyboard delete (first press
+     * clears, second press removes structure). Each cleared cell is re-rendered
+     * via `update()`; setting `.text` alone only patches state, so without this
+     * the non-anchor cells would keep their stale DOM.
+     */
+    emptySelectedCells(): boolean {
         if (!this.hasSelection)
-            return;
+            return false;
 
         const minRow = Math.min(this._anchor!.row, this._focus!.row);
         const maxRow = Math.max(this._anchor!.row, this._focus!.row);
         const minColumn = Math.min(this._anchor!.column, this._focus!.column);
         const maxColumn = Math.max(this._anchor!.column, this._focus!.column);
 
+        let hadContent = false;
         for (let r = minRow; r <= maxRow; r++) {
             for (let c = minColumn; c <= maxColumn; c++) {
                 const content = this._table!.cellAt(r, c)?.firstChild;
-                if (content && content.isContent() && content.text !== '')
+                if (content && content.isContent() && content.text !== '') {
+                    hadContent = true;
                     content.text = '';
+                    content.update();
+                }
             }
         }
 
+        return hadContent;
+    }
+
+    clearSelectedCells(): void {
+        if (!this.hasSelection)
+            return;
+
         const anchorContent = this._anchor!.cell.firstChild;
+        this.emptySelectedCells();
         this.clear();
         if (anchorContent && anchorContent.isContent())
             anchorContent.setCursor(0, 0, true);

@@ -320,21 +320,21 @@ const subscribe = (channel: string, listener: Listener, once: boolean): (() => v
   // is matched by the filter, while global `emit` (no filter) still reaches it.
   void listen(channel, (e) => wrapped(e.payload), { target: getCurrentWindow().label }).then(
     (fn) => {
-    if (disposed) {
-      fn()
-      return
-    }
-    unlisten = fn
-    if (!registry.has(channel)) registry.set(channel, new Set())
-    registry.get(channel)!.add(fn)
+      if (disposed) {
+        fn()
+        return
+      }
+      unlisten = fn
+      if (!registry.has(channel)) registry.set(channel, new Set())
+      registry.get(channel)!.add(fn)
 
     // The editor store has now attached its bootstrap listener — kick off the
     // backend-driven handshake exactly once.
-    if (channel === 'mt::bootstrap-editor' && bootstrapTrigger && !bootstrapFired) {
-      bootstrapFired = true
-      bootstrapTrigger()
-    }
-  })
+      if (channel === 'mt::bootstrap-editor' && bootstrapTrigger && !bootstrapFired) {
+        bootstrapFired = true
+        bootstrapTrigger()
+      }
+    })
 
   return dispose
 }

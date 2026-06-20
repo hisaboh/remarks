@@ -13,7 +13,7 @@
 
 import { isTauri, initPlatform } from './platform'
 
-const start = async (): Promise<void> => {
+const start = async(): Promise<void> => {
   if (isTauri()) {
     await initPlatform()
   }

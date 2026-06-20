@@ -1,8 +1,24 @@
-import * as pdfjsLib from 'pdfjs-dist';
-// `?url` (Vite) yields the bundled worker's URL so PDF.js can spawn it.
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// pdfjs-dist touches browser-only globals (e.g. DOMMatrix) at module eval, so a
+// top-level import would crash any Node test that merely imports the engine
+// (the whole `@muyajs/core` graph reaches this module). Load it lazily — only
+// when a PDF is actually rasterised — so importing the engine stays side-effect
+// free and PDF.js is code-split out of the initial bundle too.
+let pdfjsPromise: Promise<typeof import('pdfjs-dist')> | null = null;
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+function getPdfjs(): Promise<typeof import('pdfjs-dist')> {
+    if (!pdfjsPromise) {
+        pdfjsPromise = (async () => {
+            const pdfjsLib = await import('pdfjs-dist');
+            // `?url` (Vite) yields the bundled worker's URL so PDF.js can spawn it.
+            const { default: workerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
+            pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+
+            return pdfjsLib;
+        })();
+    }
+
+    return pdfjsPromise;
+}
 
 export interface IPdfPageRender {
     dataUrl: string;
@@ -44,6 +60,7 @@ export function loadPdfPage(src: string, baseScale = 1.5): Promise<IPdfPageRende
         const bytes = await window.fileUtils.readFile(filePath);
         const data = typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes;
 
+        const pdfjsLib = await getPdfjs();
         const pdf = await pdfjsLib.getDocument({ data }).promise;
         const page = await pdf.getPage(1);
 

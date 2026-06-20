@@ -102,6 +102,7 @@ function makeAnchorBlock(
         getCursor: () => ({ start: { offset: cursor }, end: { offset: cursor } }),
         setCursor: vi.fn(),
         getAnchor: () => wrapper,
+        closestBlock: () => null,
         firstContentInDescendant: () => block,
         getState: () => ({ name: blockName, text: block.text }),
         update: vi.fn(),
@@ -124,7 +125,7 @@ function makeClipboard(
     } as unknown as Muya);
     Object.defineProperty(clipboard, 'selection', {
         get: () => ({
-            getSelection: () => ({ isSelectionInSameBlock: true, anchorBlock }),
+            getSelection: () => ({ isSelectionInSameBlock: true, anchor: { block: anchorBlock } }),
             table: tableStub,
         }),
     });

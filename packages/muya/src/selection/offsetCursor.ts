@@ -6,7 +6,7 @@
 import type Content from '../block/base/content';
 import type { ScrollPage } from '../block/scrollPage';
 import type { TState } from '../state/types';
-import type { ICursor, ISelection } from './types';
+import type { IPathCursor, ISelection } from './types';
 
 /** One end of a source-mode (CodeMirror) selection: a `{ line, ch }` offset. */
 export interface IIndexPosition {
@@ -113,7 +113,7 @@ function _findSentinel(scrollPage: ScrollPage, sentinel: string): ISentinelHit |
 
 /**
  * Resolve the index cursor against the live (sentinel-bearing) block tree into
- * a PATH-ONLY `ICursor` (json paths + offsets), or `null` when neither sentinel
+ * a PATH-ONLY `IPathCursor` (json paths + offsets), or `null` when neither sentinel
  * resolved to a content block.
  *
  * Only the plain `anchorPath`/`focusPath` arrays are captured (snapshotted from
@@ -126,7 +126,7 @@ function _findSentinel(scrollPage: ScrollPage, sentinel: string): ISentinelHit |
  * The returned offsets are sentinel-free: the focus offset is decremented when
  * the anchor sentinel precedes it in the same block.
  */
-export function resolveSentinelCursor(scrollPage: ScrollPage): ICursor | null {
+export function resolveSentinelCursor(scrollPage: ScrollPage): IPathCursor | null {
     const anchorHit = _findSentinel(scrollPage, ANCHOR_SENTINEL);
     const focusHit = _findSentinel(scrollPage, FOCUS_SENTINEL);
 
@@ -140,7 +140,7 @@ export function resolveSentinelCursor(scrollPage: ScrollPage): ICursor | null {
     let focusOffset = focus.offset;
 
     // When both sentinels live in the same block, the second one's recorded
-    // offset is shifted by the first sentinel's length. Normalise so both
+    // offset is shifted by the first sentinel's length. Normalize so both
     // offsets are expressed against the sentinel-free text.
     if (anchor.block === focus.block) {
         if (anchorOffset <= focusOffset)
@@ -216,7 +216,8 @@ export function injectStateSentinels(
     state: TState[],
     selection: ISelection,
 ): TState[] | null {
-    const { anchorPath, focusPath } = selection;
+    const anchorPath = selection.anchor.path;
+    const focusPath = selection.focus.path;
     const anchorOffset = selection.anchor.offset;
     const focusOffset = selection.focus.offset;
 

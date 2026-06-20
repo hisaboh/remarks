@@ -7,15 +7,19 @@ import { DEFAULT_SEARCH_OPTIONS } from '../config';
 import { buildRegexValue, matchString } from '../utils/search';
 
 export class Search {
-    public value: string = '';
+    private _value: string = '';
     public matches: IMatch[] = [];
     public index: number = -1;
 
-    get scrollPage() {
-        return this.muya.editor.scrollPage;
+    get value() {
+        return this._value;
     }
 
-    constructor(public muya: Muya) {}
+    private get _scrollPage() {
+        return this._muya.editor.scrollPage;
+    }
+
+    constructor(private _muya: Muya) {}
 
     private _updateMatches(isClear = false) {
         const { matches, index } = this;
@@ -81,7 +85,8 @@ export class Search {
     replace(replaceValue: string, opt = { isSingle: true, isRegexp: false }) {
         const { isSingle, isRegexp, ...rest } = opt;
         const options = Object.assign({}, DEFAULT_SEARCH_OPTIONS, rest);
-        const { matches, value, index } = this;
+        const { matches, index } = this;
+        const value = this._value;
 
         if (matches.length) {
             if (isRegexp)
@@ -142,15 +147,20 @@ export class Search {
     search(value: string, opts = {}) {
         const matches: IMatch[] = [];
         const options = Object.assign({}, DEFAULT_SEARCH_OPTIONS, opts);
-        const { highlightIndex } = options;
+        const { highlightIndex, selectHighlight } = options;
         let index = -1;
+
+        // The currently active match, captured before it is cleared below, so a
+        // `selectHighlight` request can drop the cursor back onto it when the
+        // new search has no match of its own (e.g. closing the search bar).
+        const prevActiveMatch = this.matches[this.index];
 
         // Empty last search.
         this._updateMatches(true);
 
         // Highlight current search.
         if (value) {
-            this.scrollPage?.depthFirstTraverse((block: TreeNode) => {
+            this._scrollPage?.depthFirstTraverse((block: TreeNode) => {
                 if (block.isContent()) {
                     const { text } = block;
                     if (text && typeof text === 'string') {
@@ -180,9 +190,21 @@ export class Search {
             index = 0;
         }
 
-        Object.assign(this, { value, matches, index });
+        Object.assign(this, { _value: value, matches, index });
 
         this._updateMatches();
+
+        // Restore the editor cursor onto the active match. Mirrors muyajs's
+        // `render(selectHighlight)` -> `setCursor()` path: closing the search
+        // bar empties the search with `selectHighlight`, which must place the
+        // cursor where the highlight was so the user can keep typing there.
+        if (selectHighlight) {
+            const activeMatch = matches[index] ?? prevActiveMatch;
+            if (activeMatch) {
+                const { block, start, end } = activeMatch;
+                block.setCursor(start, end, true);
+            }
+        }
 
         return this;
     }

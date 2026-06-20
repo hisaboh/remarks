@@ -27,6 +27,7 @@ import type {
   FileNotification,
   LineEnding,
   MarkdownDocument,
+  PageOptions,
   TabOptions
 } from '@shared/types/files'
 
@@ -82,7 +83,7 @@ interface FormatLinkClickPayload {
 interface ExportPayload {
   type: string
   content?: string
-  pageOptions?: unknown
+  pageOptions?: PageOptions
 }
 
 interface AutoSavePayload {
@@ -104,10 +105,20 @@ interface ContentChangePayload {
   blocks?: unknown
 }
 
+interface AffiliationEntry {
+  type: string
+  functionType?: string
+  listType?: string
+  listItemType?: string
+  isLooseListItem?: boolean
+  [key: string]: unknown
+}
+
 interface SelectionChange {
   start: { key: string; offset: number; block?: { text?: string; functionType?: string }; type?: string }
   end: { key: string; offset: number; block?: { functionType?: string }; type?: string }
-  affiliation?: Array<{ type: string; functionType?: string; [key: string]: unknown }>
+  affiliation?: AffiliationEntry[]
+  hasFrontMatter?: boolean
 }
 
 interface SelectionFormat {
@@ -409,8 +420,8 @@ export const useEditorStore = defineStore('editor', {
     },
 
     LISTEN_SCREEN_SHOT(): void {
-      window.electron.ipcRenderer.on('mt::screenshot-captured', () => {
-        bus.emit('screenshot-captured')
+      window.electron.ipcRenderer.on('mt::screenshot-captured', (_, filePath) => {
+        bus.emit('screenshot-captured', filePath)
       })
     },
 
@@ -425,13 +436,14 @@ export const useEditorStore = defineStore('editor', {
         })
         const id = getUniqueId()
         // Dynamic IPC channel — not part of the static IpcMainEventChannels contract.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ;(window.electron.ipcRenderer.once as any)(
-          `mt::response-of-image-path-${id}`,
-          (_: unknown, files: string[]) => {
-            rs(files)
-          }
-        )
+        ;(
+          window.electron.ipcRenderer.once as (
+            channel: string,
+            listener: (event: unknown, files: string[]) => void
+          ) => void
+        )(`mt::response-of-image-path-${id}`, (_: unknown, files: string[]) => {
+          rs(files)
+        })
         window.electron.ipcRenderer.send('mt::ask-for-image-auto-path', {
           pathname,
           src,
@@ -832,8 +844,14 @@ export const useEditorStore = defineStore('editor', {
             project: projectStore
           })
         )
-        bus.emit('cmd::register-command', new LineEndingCommand(this))
-        bus.emit('cmd::register-command', new TrailingNewlineCommand(this))
+        bus.emit(
+          'cmd::register-command',
+          new LineEndingCommand(this)
+        )
+        bus.emit(
+          'cmd::register-command',
+          new TrailingNewlineCommand(this)
+        )
 
         setTimeout(() => {
           window.electron.ipcRenderer.send('mt::request-keybindings')
@@ -1324,16 +1342,19 @@ export const useEditorStore = defineStore('editor', {
     },
 
     /**
-     * Refresh the sidebar TOC from a flat heading list. The engine only emits
-     * `json-change` (which feeds LISTEN_FOR_CONTENT_CHANGE) on document
-     * MUTATIONS, not on the `setContent` used to load a file or switch tabs —
-     * so the editor must call this after each load to seed the TOC, otherwise
-     * the panel stays empty until the first edit (hisaboh/remarks#19).
+     * Replaces the table of contents with a fresh snapshot from the engine.
+     *
+     * Used on file load and tab switch, where the engine fires no `json-change`
+     * event (so `LISTEN_FOR_CONTENT_CHANGE` never runs and the TOC would
+     * otherwise stay empty until the first edit). Assigns unconditionally: this
+     * is a re-seed on load/switch, so there is no `equal` guard to short-circuit
+     * — the incoming snapshot always wins, even if it happens to deep-equal the
+     * current TOC.
+     * @param toc Flat list of headings returned by `muya.getTOC()`.
      */
     UPDATE_TOC(toc: TocItem[]): void {
-      if (equal(toc, this.listToc)) return
-      this.listToc = toc
-      this.toc = listToTree<TocItem>(toc)
+      this.listToc = toc ?? []
+      this.toc = listToTree<TocItem>(toc ?? [])
     },
 
     // Content change from realtime preview editor and source code editor
@@ -1380,8 +1401,9 @@ export const useEditorStore = defineStore('editor', {
       if (blocks) tab.blocks = blocks
 
       // Only update TOC if it's the current file
-      if (id === this.currentFile?.id && toc) {
-        this.UPDATE_TOC(toc)
+      if (id === this.currentFile?.id && toc && !equal(toc, this.listToc)) {
+        this.listToc = toc
+        this.toc = listToTree<TocItem>(toc)
       }
 
       const lastEditIndex = tab.history.lastEditIndex
@@ -1519,8 +1541,7 @@ export const useEditorStore = defineStore('editor', {
         content: content ?? '',
         filename,
         pathname,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pageOptions: (pageOptions ?? {}) as any
+        pageOptions: pageOptions ?? {}
       })
     },
 
@@ -1799,6 +1820,7 @@ interface ApplicationMenuState {
   isCodeFences: boolean
   isCodeContent: boolean
   isTable: boolean
+  hasFrontMatter: boolean
   affiliation: Record<string, boolean>
 }
 
@@ -1808,16 +1830,11 @@ interface ApplicationMenuState {
  * @param {*} selection The selection.
  * @returns A object that represents the application menu state.
  */
-// Loose shapes for the application-menu selection helpers. The legacy code
-// indexes through Muya block trees that aren't typed yet; use `any` locally to
-// keep the conversion focused on the store surface.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type LooseAffiliation = any
-
 const createApplicationMenuState = ({
   start,
   end,
-  affiliation
+  affiliation,
+  hasFrontMatter
 }: SelectionChange): ApplicationMenuState => {
   const state: ApplicationMenuState = {
     isDisabled: false,
@@ -1832,13 +1849,14 @@ const createApplicationMenuState = ({
     isCodeContent: false,
     // Whether the selection contains a table.
     isTable: false,
+    hasFrontMatter: !!hasFrontMatter,
     // Contains keys about the selection type(s) (string, boolean) like "ul: true".
     affiliation: {}
   }
   const { isMultiline } = state
-  const aff = (affiliation ?? []) as LooseAffiliation[]
-  const startBlock = (start.block ?? {}) as LooseAffiliation
-  const endBlock = (end.block ?? {}) as LooseAffiliation
+  const aff: AffiliationEntry[] = affiliation ?? []
+  const startBlock: { text?: string; functionType?: string } = start.block ?? {}
+  const endBlock: { functionType?: string } = end.block ?? {}
 
   // Get code block information from selection.
   if (
@@ -1855,20 +1873,24 @@ const createApplicationMenuState = ({
     }
   }
 
-  // Query list information.
-  if (aff.length >= 1 && /ul|ol/.test(aff[0].type)) {
-    const listBlock = aff[0]
-    state.affiliation[listBlock.type] = true
+  // Check every list level in the affiliation chain — nested lists show all
+  // levels (e.g. a ul wrapping an ol checks both). Scanning the full chain (not
+  // just the depth-3 loop below) keeps a deeply nested inner list checked. The
+  // loose/task flags come from the INNERMOST list (the one the cursor is in);
+  // the chain is outermost-first, so that is the last ul/ol entry.
+  const listEntries = aff.filter((b) => b.type === 'ul' || b.type === 'ol')
+  for (const entry of listEntries) {
+    // Task and bullet lists are both `type: 'ul'`; distinguish by listType so a
+    // chain with several kinds (e.g. ol > task > ul) checks each list menu item.
+    const kind = entry.type === 'ol' ? 'ol' : entry.listType === 'task' ? 'task' : 'ul'
+    state.affiliation[kind] = true
+  }
+  const innerList = listEntries[listEntries.length - 1]
+  if (innerList) {
     // The engine's affiliation entry carries the loose flag on the list block
     // itself (derived from `meta.loose`), not via a `children` chain.
-    state.isLooseListItem = !!listBlock.isLooseListItem
-    state.isTaskList = listBlock.listType === 'task'
-  } else if (aff.length >= 3 && aff[1].type === 'li') {
-    const listItem = aff[1]
-    const listType = listItem.listItemType === 'order' ? 'ol' : 'ul'
-    state.affiliation[listType] = true
-    state.isLooseListItem = !!listItem.isLooseListItem
-    state.isTaskList = listItem.listItemType === 'task'
+    state.isLooseListItem = !!innerList.isLooseListItem
+    state.isTaskList = innerList.listType === 'task'
   }
 
   // Search with block depth 3 (e.g. "ul -> li -> p" where p is the actually paragraph inside the list (item)).
@@ -1883,13 +1905,21 @@ const createApplicationMenuState = ({
       if (b.functionType === 'table') {
         state.isTable = true
         state.isDisabled = true
+        state.affiliation[b.type] = true
+      } else if (b.functionType === 'diagram') {
+        // Diagrams are atomic, non-formattable blocks: disable the whole
+        // paragraph + format menus like a code fence, but they are not tables.
+        state.isCodeFences = true
+        state.affiliation[b.functionType] = true
       }
       break
     } else if (isMultiline && /^h{1,6}$/.test(b.type)) {
       // Multiple block elements are selected.
       state.affiliation = {}
       break
-    } else {
+    } else if (b.type !== 'ul' && b.type !== 'ol') {
+      // Lists are handled above (innermost only); the depth-limited scan must
+      // not re-add an outer list type and check two list kinds at once.
       if (!state.affiliation[b.type]) {
         state.affiliation[b.type] = true
       }
@@ -1909,10 +1939,16 @@ const createApplicationMenuState = ({
 /**
  * Creates a object that contains the formats selection state.
  */
-const createSelectionFormatState = (formats: SelectionFormat[]): Record<string, boolean> => {
+export const createSelectionFormatState = (
+  formats: SelectionFormat[]
+): Record<string, boolean> => {
   const state: Record<string, boolean> = {}
   for (const item of formats) {
-    state[item.type] = true
+    // Underline/superscript/subscript/highlight are carried as `html_tag`
+    // tokens whose `tag` (u/sup/sub/mark) is the real format key the menu
+    // map keys off — the bare `type` would only ever yield `html_tag`.
+    const key = item.type === 'html_tag' ? (item.tag as string) : item.type
+    if (key) state[key] = true
   }
   return state
 }

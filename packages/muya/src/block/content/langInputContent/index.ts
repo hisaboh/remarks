@@ -1,5 +1,5 @@
 import type { Muya } from '../../../muya';
-import type { ICursor } from '../../../selection/types';
+import type { IRenderCursor } from '../../../selection/types';
 import type { ICodeBlockState } from '../../../state/types';
 import type CodeBlock from '../../commonMark/codeBlock';
 import { CLASS_NAMES } from '../../../config';
@@ -28,7 +28,7 @@ class LangInputContent extends Content {
         return this.parent;
     }
 
-    override update(_cursor?: ICursor, highlights = []) {
+    override update(_cursor?: IRenderCursor, highlights = []) {
         this.domNode!.innerHTML = escapeLangInputInnerHtml(this.text, highlights);
     }
 
@@ -36,7 +36,7 @@ class LangInputContent extends Content {
      * Update this block lang and parent's lang, and show/hide language selector.
      * @param lang
      */
-    updateLanguage(lang: string) {
+    private _updateLanguage(lang: string) {
         const { start, end } = this.getCursor()!;
         this.text = lang;
         this.parent!.lang = lang;
@@ -46,10 +46,17 @@ class LangInputContent extends Content {
         this.muya.eventCenter.emit('content-change', { block: this });
     }
 
+    // Public entry for setting the language programmatically (e.g. pasting into
+    // the language input), so the code block re-highlights and `parent.lang`
+    // updates; the DOM input handlers use `_updateLanguage` directly.
+    updateLanguage(lang: string): void {
+        this._updateLanguage(lang);
+    }
+
     override inputHandler() {
         const textContent = this.domNode!.textContent ?? '';
         const lang = textContent.split(/\s+/)[0];
-        this.updateLanguage(lang);
+        this._updateLanguage(lang);
     }
 
     override enterHandler(event: Event) {
@@ -67,7 +74,7 @@ class LangInputContent extends Content {
         if (start.offset === 1 && end.offset === 1 && text.length === 1) {
             event.preventDefault();
             const lang = '';
-            this.updateLanguage(lang);
+            this._updateLanguage(lang);
         }
         if (start.offset === 0 && end.offset === 0) {
             event.preventDefault();

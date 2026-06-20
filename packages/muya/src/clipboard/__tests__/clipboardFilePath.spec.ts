@@ -1,5 +1,5 @@
-/* eslint-disable ts/no-explicit-any */
 import type Content from '../../block/base/content';
+import type Parent from '../../block/base/parent';
 import type { Muya } from '../../muya';
 import { describe, expect, it, vi } from 'vitest';
 import { ScrollPage } from '../../block/scrollPage';
@@ -50,6 +50,7 @@ function makeAnchorBlock(initialText = '', cursor = 0) {
             end: { offset: cursor },
         }),
         setCursor: vi.fn(),
+        update: vi.fn(),
         getAnchor: () => null,
     };
     return block as unknown as Content & { setCursor: ReturnType<typeof vi.fn> };
@@ -64,7 +65,7 @@ function makeClipboard(
         get: () => ({
             getSelection: () => ({
                 isSelectionInSameBlock: true,
-                anchorBlock,
+                anchor: { block: anchorBlock },
             }),
         }),
     });
@@ -150,36 +151,20 @@ describe('clipboard.pasteHandler — clipboardFilePath hook', () => {
         // that await — otherwise the detached DataTransfer would yield '' here
         // and the paste would silently insert nothing.
         //
-        // A plain-text paste into a non-literal anchor now always parses
-        // through `MarkdownToState` (Track D / sub-item 1), so the captured text
-        // lands in a created paragraph block rather than being spliced into the
-        // anchor verbatim. Mock `loadBlock` to capture the created block's state.
-        const created: any[] = [];
-        const spy = vi
-            .spyOn(ScrollPage, 'loadBlock')
-            .mockImplementation(() => ({
-                create: (_muya: unknown, state: any) => {
-                    created.push(state);
-                    return {
-                        firstContentInDescendant: () => ({
-                            text: state.text ?? '',
-                            setCursor: vi.fn(),
-                        }),
-                    };
-                },
-            }) as any);
+        // A single pasted paragraph merges inline into the anchor (muyajs
+        // `checkPasteType` MERGE), so the captured text lands in the anchor's
+        // own text rather than a separate block.
+        const spy = vi.spyOn(ScrollPage, 'loadBlock');
 
         const clipboardFilePath = vi.fn().mockResolvedValue('');
         const anchorBlock = makeAnchorBlock('', 0);
-        // The anchor's wrapper records the created block so the empty origin
-        // paragraph cleanup can run without crashing.
         const wrapper = {
             blockName: 'paragraph',
             getState: () => ({ name: 'paragraph', text: '' }),
             remove: vi.fn(),
             parent: { insertAfter: vi.fn() },
-        };
-        (anchorBlock as any).getAnchor = () => wrapper;
+        } as unknown as Parent;
+        anchorBlock.getAnchor = () => wrapper;
         const clipboard = makeClipboard({ clipboardFilePath }, anchorBlock);
         const { event, getData } = makePasteEvent({ 'text/plain': 'hello world' });
 
@@ -188,7 +173,8 @@ describe('clipboard.pasteHandler — clipboardFilePath hook', () => {
         expect(clipboardFilePath).toHaveBeenCalledOnce();
         expect(getData).toHaveBeenCalledWith('text/plain');
         // The captured text survived the async hook and reached the paste path.
-        expect(created).toEqual([{ name: 'paragraph', text: 'hello world' }]);
+        expect(anchorBlock.text).toBe('hello world');
+        expect(spy).not.toHaveBeenCalled();
 
         spy.mockRestore();
     });

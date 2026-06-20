@@ -22,6 +22,7 @@ export interface IMuyaOptions {
     frontmatterType: string; // '-' | '+' | ';' | '{';
     mermaidTheme: string;
     vegaTheme: string;
+    plantumlServer: string;
     sequenceTheme: 'hand' | 'simple';
     hideQuickInsertHint: boolean;
     hideLinkPopup: boolean;
