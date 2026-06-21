@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Merged into the generated bundle Info.plist by the Tauri macOS bundler.
+	  Points the app at the compiled "Liquid Glass" icon catalog (Assets.car,
+	  shipped via bundle.resources). CFBundleIconName selects the dynamic
+	  Tahoe icon on macOS 26+; CFBundleIconFile (remarks.icns) is the flat
+	  fallback on older macOS. Both assets are produced by
+	  scripts/setup-app-icon.mjs from docs/icon/remarks.icon.
+	-->
+	<key>CFBundleIconName</key>
+	<string>remarks</string>
+	<key>CFBundleIconFile</key>
+	<string>remarks</string>
+</dict>
+</plist>
