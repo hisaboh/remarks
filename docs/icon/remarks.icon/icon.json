@@ -48,7 +48,7 @@
           ],
           "glass" : false,
           "hidden" : true,
-          "image-name" : "Rフロント.png",
+          "image-name" : "R_front.png",
           "name" : "R front"
         },
         {
@@ -79,7 +79,7 @@
             }
           ],
           "glass" : true,
-          "image-name" : "Rフロント.png",
+          "image-name" : "R_front.png",
           "name" : "R front mono",
           "opacity" : 0.53
         }
@@ -101,7 +101,7 @@
           },
           "glass" : true,
           "hidden" : false,
-          "image-name" : "回路 2.png",
+          "image-name" : "R_logic.png",
           "name" : "logic"
         }
       ],
@@ -132,9 +132,13 @@
           ],
           "glass" : false,
           "hidden" : false,
-          "image-name" : "R背景 2.png",
+          "image-name" : "R_background.png",
           "name" : "R background",
           "opacity" : 0.25
+        },
+        {
+          "image-name" : "R_background.png",
+          "name" : "R_background"
         }
       ],
       "shadow" : {
