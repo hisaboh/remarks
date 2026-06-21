@@ -176,6 +176,21 @@ code.mu-inline-rule {
     user-select: none;
 }
 
+/* A long inline-math formula must scroll horizontally (in the editing popup and
+   inline when hidden) instead of overflowing the editor area. */
+.mu-math > .mu-math-render {
+    max-width: calc(var(--editor-area-width, 800px) - 100px);
+    overflow: auto hidden;
+
+    scrollbar-width: thin;
+}
+
+.mu-math > .mu-math-render::-webkit-scrollbar {
+    display: block;
+    width: 3px;
+    height: 6px;
+}
+
 .mu-ruby > .mu-ruby-render {
     left: 50%;
 
@@ -234,6 +249,14 @@ div .mu-math-error,
     box-shadow: none;
 
     user-select: auto;
+}
+
+/* A parse-error message is short and never needs scrolling, but `overflow: auto`
+   makes the inline-block take its baseline from its bottom edge, pushing it a few
+   px above the surrounding text. `visible` keeps it on the baseline. (A long
+   valid formula keeps `overflow: auto` so it stays scrollable, not truncated.) */
+.mu-hide.mu-math > .mu-math-render.mu-math-error {
+    overflow: visible;
 }
 
 .mu-ruby:not(.mu-hide) > .mu-ruby-render,
