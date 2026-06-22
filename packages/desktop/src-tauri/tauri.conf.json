@@ -38,6 +38,10 @@
     "externalBin": [
       "binaries/rg"
     ],
+    "resources": {
+      "icons/Assets.car": "Assets.car",
+      "icons/remarks.icns": "remarks.icns"
+    },
     "category": "Productivity",
     "copyright": "Copyright © Hisanaga MAKINO and MarkText contributors",
     "shortDescription": "A simple and elegant markdown editor.",

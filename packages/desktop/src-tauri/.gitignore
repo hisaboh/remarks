@@ -3,3 +3,7 @@
 /bin
 
 /binaries
+
+# Generated from docs/icon/remarks.icon by scripts/setup-app-icon.mjs
+/icons/Assets.car
+/icons/remarks.icns
