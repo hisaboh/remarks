@@ -33,7 +33,10 @@ permissions:
 jobs:
   release:
     name: Build & draft release (macOS arm64)
-    runs-on: macos-15
+    # macos-26 ships Xcode 26, whose actool can compile the Liquid Glass
+    # .icon (docs/icon/remarks.icon). macos-15 only has Xcode 16, which
+    # crashes on the new icon format (IBPlatformToolFailureException).
+    runs-on: macos-26
 
     steps:
       - name: Validate semver tag
