@@ -85,6 +85,26 @@ jobs:
       - name: Stage ripgrep sidecar
         run: pnpm -C packages/desktop run setup-ripgrep
 
+      # The Liquid Glass app icon is compiled from docs/icon/remarks.icon by
+      # actool, which needs the macOS 26 SDK (Xcode 26). Pick the newest Xcode
+      # installed on the runner and log the actool version so failures here are
+      # diagnosable (e.g. an older image whose actool can't read the .icon).
+      - name: Select newest Xcode (Liquid Glass actool)
+        run: |
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          echo "Available Xcodes:"; ls -d /Applications/Xcode*.app 2>/dev/null || true
+          echo "Selecting: $latest"
+          sudo xcode-select -s "$latest/Contents/Developer"
+          xcodebuild -version
+          xcrun actool --version | head -5 || true
+
+      # Compile docs/icon/remarks.icon -> src-tauri/icons/{Assets.car,remarks.icns}
+      # (same as the prebuild:tauri hook that tauri-action bypasses). These are
+      # git-ignored, so without this step bundle.resources references missing
+      # files and `tauri build` fails.
+      - name: Build macOS app icon
+        run: pnpm -C packages/desktop run setup-app-icon
+
       - name: Build and draft the release
         uses: tauri-apps/tauri-action@v0.6.2
         env:
