@@ -191,11 +191,20 @@ code.mu-inline-rule {
     user-select: none;
 }
 
-/* A long inline-math formula must scroll horizontally (in the editing popup and
-   inline when hidden) instead of overflowing the editor area. */
+/* Cap the inline-math render to the VIEWPORT, not `var(--editor-area-width)`.
+   A long formula scrolls horizontally instead of overflowing the editor
+   (marktext #4339) — both for the editing popup and the confirmed (hidden)
+   inline render. We use `60vw` rather than `calc(var(--editor-area-width) -
+   100px)` because this fork's themes express the editor width as a PERCENTAGE
+   (standard themes `calc(100px + 80%)`, and a user can set e.g.
+   `--editor-area-width: 95%`). For this absolutely-positioned box the `%`
+   resolves against `.mu-math` (the formula's own width) and `calc(95% - 100px)`
+   can even go negative, which collapsed/clipped the render under WebKit/
+   WKWebView. A viewport cap is independent of the containing box, so it stays
+   correct on any theme. */
 .mu-math > .mu-math-render {
-    max-width: calc(var(--editor-area-width, 800px) - 100px);
-    overflow: auto hidden;
+    max-width: 60vw;
+    overflow: auto;
 
     scrollbar-width: thin;
 }
