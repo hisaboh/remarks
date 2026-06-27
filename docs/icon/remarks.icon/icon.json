@@ -1,7 +1,17 @@
 {
-  "fill" : {
-    "automatic-gradient" : "srgb:0.47563,0.47565,0.47564,1.00000"
-  },
+  "fill-specializations" : [
+    {
+      "value" : {
+        "solid" : "gray:1.00000,1.00000"
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "automatic-gradient" : "srgb:0.12984,0.12985,0.12984,1.00000"
+      }
+    }
+  ],
   "groups" : [
     {
       "blur-material" : null,
@@ -20,9 +30,21 @@
               }
             }
           ],
+          "hidden" : true,
           "image-name" : "pen_line 2.png",
           "name" : "pen_line 2",
           "opacity" : 1
+        },
+        {
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : "automatic"
+            }
+          ],
+          "glass" : true,
+          "image-name" : "remarks_pen.png",
+          "name" : "remarks_pen"
         }
       ],
       "shadow" : {
@@ -44,9 +66,19 @@
             ]
           },
           "glass" : true,
+          "hidden" : true,
           "image-name" : "pen_holder 3.png",
           "name" : "pen_holder 3",
           "opacity" : 0.62
+        },
+        {
+          "fill" : {
+            "solid" : "gray:0.00000,1.00000"
+          },
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "remarks_pen_body.png",
+          "name" : "remarks_pen_body"
         }
       ],
       "shadow" : {
@@ -74,9 +106,18 @@
               }
             }
           ],
+          "hidden" : true,
           "image-name" : "pen_top 2.png",
           "name" : "pen_top 2",
           "opacity" : 0.36
+        },
+        {
+          "fill" : {
+            "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
+          },
+          "glass" : false,
+          "image-name" : "remarks_pen_top.png",
+          "name" : "remarks_pen_top"
         }
       ],
       "shadow" : {
@@ -101,9 +142,20 @@
               "value" : "normal"
             }
           ],
-          "fill" : {
-            "solid" : "srgb:1.00000,1.00000,1.00000,1.00000"
-          },
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "extended-gray:0.00000,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "glass" : true,
           "hidden" : false,
           "image-name" : "logic.png",
           "name" : "logic"
