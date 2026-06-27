@@ -35,6 +35,7 @@ export interface ICodeBlockState {
         // its first whitespace-delimited token; serialization prefers `info`
         // so the extra attributes round-trip.
         info?: string;
+        fenceLength?: number;
     };
     text: string;
 }

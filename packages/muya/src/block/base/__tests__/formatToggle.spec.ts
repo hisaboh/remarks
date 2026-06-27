@@ -125,6 +125,49 @@ describe('format.format() toggle-off with the caret inside the formatted run', (
         content.format('mark');
         expect(content.text).toBe('word');
     });
+
+    it('sup (html_tag): `<sup>word</sup>` removes the superscript tags', () => {
+        // `format('sup')` matches the html_tag token whose tag === 'sup'.
+        const content = caretInFirstBlock(bootMuya('<sup>word</sup>\n'), 2);
+        content.format('sup');
+        expect(content.text).toBe('word');
+    });
+
+    it('sub (html_tag): `<sub>word</sub>` removes the subscript tags', () => {
+        const content = caretInFirstBlock(bootMuya('<sub>word</sub>\n'), 2);
+        content.format('sub');
+        expect(content.text).toBe('word');
+    });
+});
+
+// #2063 — toggling the INNER format off a nested run (e.g. removing italic from
+// bold-italic `***foo***`). `clearFormat` splices the inner token's children up
+// into the ancestor wrapper's `children` array, but the ancestor's cached `raw`
+// goes stale; the serializer must rebuild the wrapper from its children, not
+// trust that raw, or the toggle is a silent no-op.
+describe('format.format() toggle-off the inner format of a nested run (#2063)', () => {
+    it('em inside strong: selecting `foo` in `***foo***` un-italics to `**foo**`', () => {
+        // Raw offsets: `bar ***foo*** bar` → `foo` spans 7..10 (inside both the
+        // strong 4..13 and the em 6..11 token ranges).
+        const content = selectInFirstBlock(bootMuya('bar ***foo*** bar\n'), 7, 10);
+        content.format('em');
+        expect(content.text).toBe('bar **foo** bar');
+    });
+
+    it('the un-italic also drops the inner markers from the serialized markdown', async () => {
+        const muya = bootMuya('bar ***foo*** bar\n');
+        selectInFirstBlock(muya, 7, 10).format('em');
+        await vi.waitFor(() => {
+            expect(muya.getMarkdown().trim()).toBe('bar **foo** bar');
+        });
+    });
+
+    it('strong inside del: selecting `b` in `~~a **b** a~~` un-bolds to `~~a b a~~`', () => {
+        // `~~a **b** a~~`: the strong `**b**` raw spans 5..10, text `b` at 7..8.
+        const content = selectInFirstBlock(bootMuya('~~a **b** a~~\n'), 7, 8);
+        content.format('strong');
+        expect(content.text).toBe('~~a b a~~');
+    });
 });
 
 describe('format.format() apply-ON over a non-collapsed selection', () => {
@@ -160,11 +203,55 @@ describe('format.format() apply-ON over a non-collapsed selection', () => {
         });
     });
 
+    it('sup (html_tag): selecting `abc` and applying wraps it in `<sup>…</sup>`', async () => {
+        // `format('sup')` wraps the selection with FORMAT_TAG_MAP.sup open/close.
+        const muya = bootMuya('abc\n');
+        selectInFirstBlock(muya, 0, 3).format('sup');
+        await vi.waitFor(() => {
+            expect(muya.getMarkdown()).toContain('<sup>abc</sup>');
+        });
+    });
+
+    it('sub (html_tag): selecting `abc` and applying wraps it in `<sub>…</sub>`', async () => {
+        const muya = bootMuya('abc\n');
+        selectInFirstBlock(muya, 0, 3).format('sub');
+        await vi.waitFor(() => {
+            expect(muya.getMarkdown()).toContain('<sub>abc</sub>');
+        });
+    });
+
     it('also rewrites the live block text, not only the serialized state', () => {
         const muya = bootMuya('abc\n');
         const content = selectInFirstBlock(muya, 0, 3);
         content.format('strong');
         expect(content.text).toBe('**abc**');
+    });
+});
+
+// #2166 — double-clicking a word selects the word PLUS the trailing whitespace.
+// Wrapping that whitespace inside the markers (`**foo **`) is invalid emphasis
+// per CommonMark's flanking rules, so it renders as literal text. The markers
+// must hug the non-whitespace content, leaving the whitespace outside.
+describe('format.format() trims selection whitespace before wrapping (#2166)', () => {
+    it('strong: selecting `foo ` (with trailing space) wraps only `foo`', () => {
+        // `foo bar`: offsets 0..4 cover `foo ` including the trailing space.
+        const content = selectInFirstBlock(bootMuya('foo bar\n'), 0, 4);
+        content.format('strong');
+        expect(content.text).toBe('**foo** bar');
+    });
+
+    it('em: selecting ` bar` (with leading space) wraps only `bar`', () => {
+        // `foo bar`: offsets 3..7 cover ` bar` including the leading space.
+        const content = selectInFirstBlock(bootMuya('foo bar\n'), 3, 7);
+        content.format('em');
+        expect(content.text).toBe('foo *bar*');
+    });
+
+    it('strong: selecting `foo ` then ` bar` style both-side padding wraps only the words', () => {
+        // ` foo ` at offsets 0..5 of ` foo bar` → only `foo` gets wrapped.
+        const content = selectInFirstBlock(bootMuya(' foo bar\n'), 0, 5);
+        content.format('strong');
+        expect(content.text).toBe(' **foo** bar');
     });
 });
 
@@ -215,6 +302,28 @@ function makeFakeEvent(): Event {
         stopPropagation: vi.fn(),
     } as unknown as Event;
 }
+
+// #3196 — the inline format toolbar pops up on any text selection. It must be a
+// passive (non-capturing) float, otherwise the UI keydown gate swallows Enter
+// while it is shown and a selection can no longer be replaced with a line break.
+describe('inline format toolbar is a passive float (#3196)', () => {
+    it('does not capture content keydown, so Enter passes through the UI gate', () => {
+        const muya = bootMuya('hello world\n');
+        const toolbar = new InlineFormatToolbar(muya);
+
+        expect(toolbar.capturesContentKeydown).toBe(false);
+
+        // Simulate the toolbar being the only shown float (as it is whenever
+        // text is selected) and assert the gate lets Enter through.
+        muya.ui.shownFloat.add(toolbar as unknown as Parameters<typeof muya.ui.shownFloat.add>[0]);
+        const event = { key: 'Enter', preventDefault: vi.fn() } as unknown as KeyboardEvent;
+
+        expect(muya.ui.handleContentKeydown(event)).toBe(false);
+        expect(event.preventDefault).not.toHaveBeenCalled();
+
+        toolbar.destroy();
+    });
+});
 
 describe('format picker collapses after link creation', () => {
     it('selecting the link button runs content.format(\'link\') and hides the picker', () => {

@@ -1,4 +1,5 @@
 import { resolve, dirname } from 'path'
+import type { PluginOption } from 'vite'
 import { defineConfig } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 import svgLoader from 'vite-svg-loader'
@@ -17,9 +18,12 @@ export default defineConfig({
     // hence, we need to "exclude" (in order to NOT externalise) ESonly modules so that they can be converted to commonJS and can be required() afterwards correctly
     build: {
       externalizeDeps: {
-        // Bundle electron-store inline so it is available as a CommonJS
-        // require() after electron-vite converts the main process output.
-        exclude: ['electron-store'],
+        // Bundle electron-store + plist inline so they are available as a
+        // CommonJS require() after electron-vite converts the main process
+        // output. plist 5 ships ESM-only (no CJS `exports` entry), so leaving
+        // it externalized makes the main process `require('plist')` throw
+        // ERR_PACKAGE_PATH_NOT_EXPORTED at startup.
+        exclude: ['electron-store', 'plist'],
         include: ['native-keymap']
       }
     },
@@ -91,13 +95,20 @@ export default defineConfig({
         }
       }
     },
-    plugins: [vue(), svgLoader()],
+    plugins: [vue(), svgLoader()] as PluginOption[],
     css: {
       postcss: {
         plugins: [
           postcssPresetEnv({
             stage: 0,
-            features: { 'nesting-rules': true }
+            features: {
+              'nesting-rules': true,
+              // Electron ships Chromium, which supports CSS logical properties
+              // natively. Leave them untouched so `padding-inline-start` /
+              // `inset-inline-start` mirror correctly under `dir="rtl"` instead
+              // of being down-compiled to hard-coded LTR physical props (#4673).
+              'logical-properties-and-values': false
+            }
           })
         ]
       }

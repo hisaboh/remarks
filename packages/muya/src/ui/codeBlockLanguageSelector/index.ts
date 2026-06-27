@@ -21,6 +21,34 @@ const defaultOptions = {
     showArrow: false,
 };
 
+const DIAGRAM_LANGS = new Set(['mermaid', 'vega-lite', 'plantuml', 'flowchart', 'sequence']);
+
+// The language the user actually typed after the ``` fence. The selector's
+// fuzzy search may resolve a non-code language (e.g. `vega-lite`) to an
+// unrelated Prism language, so the diagram check keys off this raw text.
+function typedFenceLang(text: string): string {
+    return text.match(/`{3,}\s*([\w-]+)/)?.[1] ?? '';
+}
+
+// Build the state for the block a ```lang fence becomes. Diagram languages
+// (from the typed text) become a diagram block, mirroring markdownToState's
+// file-load path; GitLab math becomes a math-block; everything else a fenced
+// code block highlighted with the selector's matched language.
+function newBlockStateForLang(typedLang: string, matchedLang: string, isGitlabMath: boolean) {
+    if (isGitlabMath)
+        return { name: 'math-block', meta: { mathStyle: 'gitlab' }, text: '' };
+
+    if (DIAGRAM_LANGS.has(typedLang)) {
+        return {
+            name: 'diagram',
+            meta: { type: typedLang, lang: typedLang === 'vega-lite' ? 'json' : 'yaml' },
+            text: '',
+        };
+    }
+
+    return { name: 'code-block', meta: { lang: matchedLang, type: 'fenced' }, text: '' };
+}
+
 export class CodeBlockLanguageSelector extends BaseScrollFloat {
     static pluginName = 'codePicker';
     public override capturesContentKeydown = true;
@@ -64,6 +92,12 @@ export class CodeBlockLanguageSelector extends BaseScrollFloat {
             else {
                 this.hide();
             }
+        });
+
+        // Self-hide when the caret leaves the picker's target block (#4654).
+        eventCenter.on('selection-change', ({ anchorBlock }) => {
+            if (this.status && anchorBlock !== this._block)
+                this.hide();
         });
     }
 
@@ -142,6 +176,11 @@ export class CodeBlockLanguageSelector extends BaseScrollFloat {
         if (!block)
             return;
 
+        // Bail if the block was detached from the document while the picker
+        // stayed open — mutating an orphaned block crashes on a null parent (#4654).
+        if (!block.outMostBlock)
+            return;
+
         function isParagraphContent(
             b: ParagraphContent | LangInputContent,
         ): b is ParagraphContent {
@@ -149,23 +188,9 @@ export class CodeBlockLanguageSelector extends BaseScrollFloat {
         }
 
         if (isParagraphContent(block)) {
-            const state
-                = muya.options.isGitlabCompatibilityEnabled && name === 'math'
-                    ? {
-                            name: 'math-block',
-                            meta: {
-                                mathStyle: 'gitlab',
-                            },
-                            text: '',
-                        }
-                    : {
-                            name: 'code-block',
-                            meta: {
-                                lang: name,
-                                type: 'fenced',
-                            },
-                            text: '',
-                        };
+            const isGitlabMath
+                = muya.options.isGitlabCompatibilityEnabled && name === 'math';
+            const state = newBlockStateForLang(typedFenceLang(block.text), name, isGitlabMath);
 
             const newBlock = ScrollPage.loadBlock(state.name).create(
                 this.muya,
@@ -173,13 +198,14 @@ export class CodeBlockLanguageSelector extends BaseScrollFloat {
             );
             block.parent?.replaceWith(newBlock);
             const codeContent = newBlock.lastContentInDescendant();
-            codeContent.setCursor(0, 0);
+            codeContent?.setCursor(0, 0);
         }
         else {
+            const codeBlock = block.parent!;
             block.text = name;
             block.update();
-            block.parent!.lang = name;
-            block.parent?.lastContentInDescendant()?.setCursor(0, 0);
+            codeBlock.lang = name;
+            codeBlock.lastContentInDescendant()?.setCursor(0, 0);
         }
 
         super.selectItem(item);

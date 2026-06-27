@@ -41,13 +41,25 @@ export class Ui {
         if (this.shownFloat.size === 0 || !CONTENT_NAV_KEYS.has(event.key))
             return false;
 
+        if (
+            event.shiftKey
+            && (event.key === EVENT_KEYS.ArrowUp || event.key === EVENT_KEYS.ArrowDown)
+        ) {
+            return false;
+        }
+
+        // Block the content handler only when a shown float actually captures
+        // the key; a passive float (e.g. the format toolbar) must let it through
+        // so Enter/Tab/arrows over a selection still work (#3196).
+        let captured = false;
         for (const tool of this.shownFloat) {
             if (tool.capturesContentKeydown) {
                 event.preventDefault();
+                captured = true;
                 break;
             }
         }
 
-        return true;
+        return captured;
     }
 }

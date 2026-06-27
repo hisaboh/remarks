@@ -40,6 +40,8 @@ const LINK_SELECTOR = [
     `span.${CLASS_NAMES.MU_LINK}`,
     `a.${CLASS_NAMES.MU_REFERENCE_LINK}`,
     `a.${CLASS_NAMES.MU_RAW_HTML}`,
+    `a.${CLASS_NAMES.MU_AUTO_LINK}`,
+    `a.${CLASS_NAMES.MU_AUTO_LINK_EXTENSION}`,
 ].join(', ');
 
 // Click suppression covers all real anchor variants whether or not they
@@ -62,6 +64,16 @@ function isModifierClick(event: Event): boolean {
 }
 
 function isPopoverTarget(wrapper: HTMLElement): boolean {
+    // Auto-detected links are follow-only (Cmd/Ctrl-click). The edit/unlink
+    // popover doesn't apply — there is no `[text](url)` source to rewrite, and
+    // the URL re-autolinks on the next render anyway.
+    if (
+        wrapper.classList.contains(CLASS_NAMES.MU_AUTO_LINK)
+        || wrapper.classList.contains(CLASS_NAMES.MU_AUTO_LINK_EXTENSION)
+    ) {
+        return false;
+    }
+
     // HTML `<a>` is always a popover target — no source markers to hide.
     if (wrapper.classList.contains(CLASS_NAMES.MU_RAW_HTML))
         return true;
@@ -129,8 +141,11 @@ export function attachLinkMouseHandlers(muya: Muya): void {
 
         // Suppress in-editor navigation for every real anchor variant. Place
         // the cursor instead of opening a tab (standard contenteditable
-        // rich-text pattern). This runs for plain clicks too.
-        const anchor = event.target.closest<HTMLElement>(ANCHOR_CLICK_SELECTOR);
+        // rich-text pattern). This runs for plain clicks too. Anchors inside a
+        // raw HTML block preview (`.mu-html-preview a`) have no wrapper class,
+        // so match them explicitly too.
+        const anchor = event.target.closest<HTMLElement>(ANCHOR_CLICK_SELECTOR)
+            ?? event.target.closest<HTMLElement>(`.${CLASS_NAMES.MU_HTML_PREVIEW} a[href]`);
         if (anchor)
             event.preventDefault();
 
@@ -147,8 +162,28 @@ export function attachLinkMouseHandlers(muya: Muya): void {
             return;
 
         const wrapper = findLinkWrapper(event.target);
-        if (!wrapper)
+        if (!wrapper) {
+            // A link inside a raw HTML block renders into `.mu-html-preview` as
+            // a plain `<a>` (no `mu-raw-html` wrapper), so it is not matched by
+            // LINK_SELECTOR. Emit the jump for it directly.
+            const previewAnchor = event.target.closest<HTMLAnchorElement>(
+                `.${CLASS_NAMES.MU_HTML_PREVIEW} a[href]`,
+            );
+            const previewHref = previewAnchor?.getAttribute('href');
+            if (previewAnchor && previewHref) {
+                eventCenter.emit('format-click', {
+                    event,
+                    formatType: 'link',
+                    data: {
+                        href: previewHref,
+                        raw: previewAnchor.outerHTML,
+                        text: previewAnchor.textContent ?? '',
+                    },
+                });
+            }
+
             return;
+        }
 
         const linkInfo = getLinkInfo(wrapper);
         if (!linkInfo || !linkInfo.href)

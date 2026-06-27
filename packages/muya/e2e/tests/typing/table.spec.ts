@@ -130,7 +130,6 @@ test.describe('table', () => {
         // No atx-heading appears, and the table is still a table.
         await expect(page.locator(editor.atxHeading)).toHaveCount(0);
         await expect(table).toBeVisible();
-        // The literal text lives in the cell.
         await expect(cellContent).toContainText('# x');
 
         // The active selection is still inside a table cell content block —
@@ -145,6 +144,51 @@ test.describe('table', () => {
         const md = await getMarkdown(page);
         expect(md).toContain('# x');
         expect(md).toContain('|');
+    });
+
+    test('typing an inline `code` span in a cell renders a live <code> and round-trips backticks', async ({ page }) => {
+        const table = await makeTwoByTwoTable(page);
+
+        // Same cell-editing path as the `**b**` test: the cell content leaf is
+        // a `Format` block, so the inline backtick-code tokenizer applies.
+        const bodyCell = table.locator('tr').nth(1).locator('td').first();
+        const cellContent = bodyCell.locator('.mu-table-cell-content');
+        await cellContent.click();
+        await slowType(page, '`c`');
+
+        // The code span renders as a live `<code.mu-inline-rule>` element inside
+        // the cell (see inlineRenderer/renderer/inlineCode.ts — it emits
+        // `h('code.mu-inline-rule', ...)`).
+        const code = bodyCell.locator('code');
+        await expect(code).toHaveCount(1);
+        await expect(code).toContainText('c');
+
+        // getMarkdown serialises the code span back into the body cell with its
+        // backtick markers. Same marker-absorption quirk as `**b**` shows up
+        // here, so assert the backtick opener rather than an exact `` `c` ``.
+        await expect.poll(() => getMarkdown(page)).toContain('`c');
+    });
+
+    test('typing an inline link `[x](http://y)` in a cell renders a live link with href and round-trips', async ({ page }) => {
+        const table = await makeTwoByTwoTable(page);
+
+        // Same cell-editing path as the `**b**` test; the inline link tokenizer
+        // applies inside the Format cell content leaf.
+        const bodyCell = table.locator('tr').nth(1).locator('td').first();
+        const cellContent = bodyCell.locator('.mu-table-cell-content');
+        await cellContent.click();
+        await slowType(page, '[x](http://y)');
+
+        // A link WITH anchor text renders via the "has children" branch of
+        // inlineRenderer/renderer/link.ts as `span.mu-inline-rule.mu-link`
+        // (NOT an `<a>` — only the no-text-link branch emits `a.mu-no-text-link`).
+        // The `href` rides on the span's props and is reflected as an attribute.
+        const linkSpan = bodyCell.locator('span.mu-link');
+        await expect(linkSpan).toHaveCount(1);
+        await expect(linkSpan).toHaveAttribute('href', 'http://y');
+        await expect(linkSpan).toContainText('x');
+
+        await expect.poll(() => getMarkdown(page)).toContain('[x](http://y)');
     });
 
     test('clicking the table figure dead-zone places the caret in the last cell', async ({ page }) => {

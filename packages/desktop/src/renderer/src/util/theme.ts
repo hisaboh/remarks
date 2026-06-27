@@ -272,13 +272,7 @@ export const addCommonStyle = (options: CommonStyleOptions): void => {
   }
 
   sheet.innerHTML = `${scrollbarStyle}
-span code,
-td code,
-th code,
-code,
-code[class*="language-"],
-.CodeMirror,
-.mu-code-block {
+.CodeMirror {
 font-family: ${codeFontFamily}, ${DEFAULT_CODE_FONT_FAMILY};
 font-size: ${codeFontSize}px;
 }

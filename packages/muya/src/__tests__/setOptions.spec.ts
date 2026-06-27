@@ -3,8 +3,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Muya } from '../muya';
 
+// The diagram renderer (`utils/diagram` default export) dynamically imports
+// heavy renderer packages (mermaid / vega) that don't load under happy-dom.
+// Mock it so the diagram-theme pass-through tests below can assert the renderer
+// is re-invoked with the switched theme on forceRender. The non-diagram tests
+// never call loadRenderer, so the mock is inert for them.
+const loadRendererMock = vi.fn();
+vi.mock('../utils/diagram', () => ({
+    default: (...args: unknown[]) => loadRendererMock(...args),
+}));
+
 // Coverage for the runtime option API added for the muyajs -> @muyajs/core
-// migration: setOptions / setFont / setTabSize / setListIndentation. Every
+// migration: setOptions / setListIndentation. Every
 // desktop Preferences toggle depends on options updating live. setOptions with
 // forceRender re-renders from current state (so render-affecting options take
 // effect) WITHOUT clearing undo history, and preserves the document content.
@@ -24,6 +34,7 @@ afterEach(() => {
         const host = bootedHosts.pop()!;
         host.remove();
     }
+    loadRendererMock.mockReset();
     if (hadVersion)
         window.MUYA_VERSION = originalVersion as string;
     else
@@ -63,7 +74,6 @@ describe('muya runtime options', () => {
         muya.insertParagraph();
         await vi.waitFor(() => {
             expect(muya.getState().length).toBe(2);
-            // the edit was recorded onto the undo stack
             expect(muya.editor.history.canUndo()).toBe(true);
         });
 
@@ -81,15 +91,6 @@ describe('muya runtime options', () => {
         expect(muya.domNode.getAttribute('spellcheck')).toBe('true');
         muya.setOptions({ spellcheckEnabled: false });
         expect(muya.domNode.getAttribute('spellcheck')).toBe('false');
-    });
-
-    it('setFont and setTabSize update options', () => {
-        const muya = bootMuya('x\n');
-        muya.setFont({ fontSize: 18, lineHeight: 1.8 });
-        expect(muya.options.fontSize).toBe(18);
-        expect(muya.options.lineHeight).toBe(1.8);
-        muya.setTabSize(2);
-        expect(muya.options.tabSize).toBe(2);
     });
 
     it('setListIndentation updates options and preserves content', () => {
@@ -116,6 +117,46 @@ describe('muya runtime options', () => {
         // listIndentation = 4 -> marker width (2) + (4 - 1) = 5 spaces.
         muya.setListIndentation(4);
         expect(muya.getMarkdown()).toBe('- a\n     - b\n');
+    });
+
+    it('setOptions writes typography as --mu-* custom properties on the root', () => {
+        const muya = bootMuya('x\n');
+        muya.setOptions({
+            fontSize: 18,
+            lineHeight: 1.8,
+            editorFontFamily: 'Inter',
+            codeFontSize: 13,
+            codeFontFamily: 'Fira Code',
+        });
+        const { style } = muya.domNode;
+        expect(style.getPropertyValue('--mu-font-size')).toBe('18px');
+        expect(style.getPropertyValue('--mu-line-height')).toBe('1.8');
+        expect(style.getPropertyValue('--mu-font-family')).toBe('Inter');
+        expect(style.getPropertyValue('--mu-code-font-size')).toBe('13px');
+        expect(style.getPropertyValue('--mu-code-font-family')).toBe('Fira Code');
+    });
+
+    it('setOptions toggles the .mu-code-wrap class', () => {
+        const muya = bootMuya('x\n');
+        muya.setOptions({ wrapCodeBlocks: true });
+        expect(muya.domNode.classList.contains('mu-code-wrap')).toBe(true);
+        muya.setOptions({ wrapCodeBlocks: false });
+        expect(muya.domNode.classList.contains('mu-code-wrap')).toBe(false);
+    });
+
+    it('construction applies typography options onto the root', () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const muya = new Muya(host, {
+            fontSize: 20,
+            codeFontSize: 12,
+            wrapCodeBlocks: true,
+        } as ConstructorParameters<typeof Muya>[1]);
+        muya.init();
+        bootedHosts.push(muya.domNode);
+        expect(muya.domNode.style.getPropertyValue('--mu-font-size')).toBe('20px');
+        expect(muya.domNode.style.getPropertyValue('--mu-code-font-size')).toBe('12px');
+        expect(muya.domNode.classList.contains('mu-code-wrap')).toBe(true);
     });
 });
 
@@ -211,5 +252,63 @@ describe('muya render-affecting options', () => {
         // The freshly inserted block follows the updated option: TOML `+++`.
         expect((muya.getState()[0] as { meta: { lang: string } }).meta.lang).toBe('toml');
         expect(muya.getMarkdown().startsWith('+++\n')).toBe(true);
+    });
+});
+
+// Diagram-theme options (mermaidTheme / vegaTheme) are render-affecting but NOT
+// parse-affecting: a forceRender rebuilds the block tree from the unchanged
+// state, and DiagramPreview.update() reads `muya.options.{mermaid,vega}Theme`
+// live on every render pass. This mirrors editor.vue's theme watcher
+// (src/renderer/src/components/editorWithTabs/editor.vue), which on a dark theme
+// calls setOptions({mermaidTheme:'dark',vegaTheme:'dark'}, true) and otherwise
+// setOptions({mermaidTheme:'default',vegaTheme:'latimes'}, true).
+describe('muya diagram-theme options', () => {
+    function bootMuyaWith(markdown: string, options: Record<string, unknown>): Muya {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const muya = new Muya(host, { markdown, ...options } as ConstructorParameters<typeof Muya>[1]);
+        muya.init();
+        bootedHosts.push(muya.domNode);
+        return muya;
+    }
+
+    it('setOptions propagates mermaidTheme / vegaTheme onto muya.options and forceRender preserves content', () => {
+        const muya = bootMuya('```vega-lite\n{"mark":"bar"}\n```\n');
+        const before = muya.getMarkdown();
+
+        // Dark theme: matches editor.vue's /dark/i branch.
+        muya.setOptions({ mermaidTheme: 'dark', vegaTheme: 'dark' }, true);
+        expect(muya.options.mermaidTheme).toBe('dark');
+        expect(muya.options.vegaTheme).toBe('dark');
+        expect(muya.getMarkdown()).toBe(before);
+
+        // Light theme: matches editor.vue's else branch.
+        muya.setOptions({ mermaidTheme: 'default', vegaTheme: 'latimes' }, true);
+        expect(muya.options.mermaidTheme).toBe('default');
+        expect(muya.options.vegaTheme).toBe('latimes');
+        expect(muya.getMarkdown()).toBe(before);
+    });
+
+    it('setOptions vegaTheme with forceRender re-invokes the diagram renderer with the switched theme', async () => {
+        const render = vi.fn();
+        loadRendererMock.mockResolvedValue(render);
+
+        const muya = bootMuyaWith('```vega-lite\n{"mark":"bar"}\n```\n', { vegaTheme: 'latimes' });
+
+        // Initial render reads the boot-time vegaTheme.
+        await vi.waitFor(() => {
+            expect(render).toHaveBeenCalled();
+            expect(render.mock.lastCall![2]).toMatchObject({ theme: 'latimes', ast: true });
+        });
+        render.mockClear();
+
+        // Switching the option + forceRender rebuilds the diagram block, whose
+        // preview re-runs the renderer reading the now-dark vegaTheme live.
+        muya.setOptions({ vegaTheme: 'dark' }, true);
+
+        await vi.waitFor(() => {
+            expect(render).toHaveBeenCalled();
+            expect(render.mock.lastCall![2]).toMatchObject({ theme: 'dark', ast: true });
+        });
     });
 });

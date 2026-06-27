@@ -113,6 +113,7 @@ export const CLASS_NAMES = genUpper2LowerKeyHash([
     'MU_EMPTY',
     'MU_FENCE_CODE',
     'MU_FOCUS_MODE',
+    'MU_CODE_WRAP',
     'MU_FRONT_MATTER',
     'MU_FRONT_ICON',
     'MU_GRAY',
@@ -125,6 +126,7 @@ export const CLASS_NAMES = genUpper2LowerKeyHash([
     'MU_HIGHLIGHT',
     'MU_HTML_BLOCK',
     'MU_HTML_ESCAPE',
+    'MU_HTML_ESCAPE_MARKER',
     'MU_HTML_PREVIEW',
     'MU_HTML_TAG',
     'MU_IMAGE_FAIL',
@@ -320,6 +322,7 @@ export const MUYA_DEFAULT_OPTIONS = {
     orderListDelimiter: '.',
     tabSize: 4,
     codeBlockLineNumbers: false,
+    wrapCodeBlocks: false,
     // bullet/list marker width + listIndentation, tab or Daring Fireball Markdown (4 spaces) --> list indentation
     listIndentation: 1,
     frontmatterType: '-',
@@ -407,8 +410,11 @@ export const URL_REG
 export const DATA_URL_REG
     = /^data:image\/[\w+-]+(?:;[\w-]+=[\w-]+|;base64)*,[a-zA-Z0-9+/]+={0,2}$/;
 export const PREVIEW_DOMPURIFY_CONFIG = {
-    // do not forbid `class` because `code` element use class to present language
-    FORBID_ATTR: ['style', 'contenteditable'],
+    // do not forbid `class` because `code` element use class to present language.
+    // `style` is allowed (matching EXPORT_DOMPURIFY_CONFIG) so inline-styled HTML
+    // blocks render the same in the editor as on export; DOMPurify still
+    // sanitizes the style values themselves.
+    FORBID_ATTR: ['contenteditable'],
     ALLOW_DATA_ATTR: false,
     USE_PROFILES: {
         html: true,

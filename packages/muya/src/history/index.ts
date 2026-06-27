@@ -78,8 +78,35 @@ const DEFAULT_OPTIONS = {
     userOnly: false,
 };
 
+export type TInputKind = 'insert' | 'delete';
+
+// Undo grouping is otherwise purely time-based (`delay`), so a fast typed
+// sentence coalesces into a single entry. These helpers let the input pipeline
+// hint a boundary: a switch between inserting and deleting, or typing a
+// whitespace (word boundary), starts a fresh undo entry.
+export function classifyInputKind(inputType: string): Nullable<TInputKind> {
+    if (inputType.startsWith('insert'))
+        return 'insert';
+    if (inputType.startsWith('delete'))
+        return 'delete';
+    return null;
+}
+
+export function shouldBreakUndoGroup(
+    prevKind: Nullable<TInputKind>,
+    kind: Nullable<TInputKind>,
+    data: Nullable<string>,
+): boolean {
+    if (kind == null)
+        return false;
+    const isWordBoundary = kind === 'insert' && data != null && /\s/.test(data);
+    const switchedKind = prevKind != null && prevKind !== kind;
+    return isWordBoundary || switchedKind;
+}
+
 class History {
     private _lastRecorded: number = 0;
+    private _lastInputKind: Nullable<TInputKind> = null;
     private _ignoreChange: boolean = false;
     private _selectionStack: (Nullable<IHistorySelection>)[] = [];
     private _stack: IStack = {
@@ -124,7 +151,10 @@ class History {
             return;
 
         const { operation, selection, rebuild } = this._stack[source].pop()!;
-        const inverseOperation = json1.type.invert(operation);
+        const inverseOperation = json1.type.invertWithDoc(
+            operation,
+            asDoc(this._muya.editor.jsonState.getState()),
+        );
 
         this._stack[dest].push({
             operation: inverseOperation as JSONOpList,
@@ -134,11 +164,15 @@ class History {
 
         this._lastRecorded = 0;
         this._ignoreChange = true;
-        if (rebuild)
-            this._muya.editor.rebuildContents(operation, selection, 'user');
-        else
-            this._muya.editor.updateContents(operation, selection, 'user');
-        this._ignoreChange = false;
+        try {
+            if (rebuild)
+                this._muya.editor.rebuildContents(operation, selection, 'user');
+            else
+                this._muya.editor.updateContents(operation, selection, 'user');
+        }
+        finally {
+            this._ignoreChange = false;
+        }
 
         this._getLastSelection();
     }
@@ -147,20 +181,9 @@ class History {
         this._stack = { undo: [], redo: [] };
         this._selectionStack = [];
         this._lastRecorded = 0;
+        this._ignoreChange = false;
     }
 
-    /**
-     * Return a deep, JSON-serializable snapshot of the undo/redo history.
-     *
-     * The ot-json1 ops are plain JSON arrays and are deep-cloned as-is.
-     * Selections drop their live `anchorBlock` / `focusBlock` references and
-     * keep only the serializable `anchorPath` / `focusPath` + offsets; the
-     * caret is re-resolved from those paths on restore (see
-     * `_toSerializableSelection`). The result can be `JSON.stringify`-d, stored
-     * on a desktop tab, and handed back to `setHistory` to restore the exact
-     * undo/redo state — `setHistory(getHistory())` followed by `undo()`
-     * reproduces the prior document state.
-     */
     getHistory(): ISerializedHistory {
         return {
             stack: {
@@ -174,12 +197,6 @@ class History {
         };
     }
 
-    /**
-     * Restore a snapshot previously produced by `getHistory`. Replaces the
-     * undo/redo stacks and recording bookkeeping. The restored selections are
-     * path-only; `Selection.setSelection` / `_setCursor` resolve the live
-     * block from the path when the op is later applied by `undo` / `redo`.
-     */
     setHistory(history: ISerializedHistory) {
         this._stack = {
             undo: history.stack.undo.map(op => this._fromSerializableOperation(op)),
@@ -250,6 +267,15 @@ class History {
 
     cutoff() {
         this._lastRecorded = 0;
+    }
+
+    markInputBoundary(inputType: string, data: Nullable<string>): void {
+        const kind = classifyInputKind(inputType);
+        if (kind == null)
+            return;
+        if (shouldBreakUndoGroup(this._lastInputKind, kind, data))
+            this.cutoff();
+        this._lastInputKind = kind;
     }
 
     private _getLastSelection() {

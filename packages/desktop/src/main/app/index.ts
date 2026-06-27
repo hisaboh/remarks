@@ -828,8 +828,20 @@ class App {
     })
 
     ipcMain.handle('mt::keybinding-save-user-keybindings', async(_event, userKeybindings) => {
-      const { keybindings } = this._accessor
-      return keybindings.setUserKeybindings(userKeybindings)
+      const { keybindings, menu } = this._accessor
+      const editorWindows = this._windowManager
+        .getWindowsByType(WindowType.EDITOR)
+        .map(({ win }) => win.browserWindow)
+        .filter((win): win is BrowserWindow => win != null)
+      const saved = await keybindings.setUserKeybindings(userKeybindings, editorWindows)
+
+      menu.updateKeybindings()
+      const keybindingMap = Object.fromEntries(keybindings.keys)
+      for (const win of editorWindows) {
+        win.webContents.send('mt::keybindings-response', keybindingMap)
+      }
+
+      return saved
     })
 
     ipcMain.handle('mt::fs-trash-item', async(_event, fullPath: string) => {

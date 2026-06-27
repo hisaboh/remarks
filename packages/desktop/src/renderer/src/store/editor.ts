@@ -76,7 +76,9 @@ interface FileChangePayload {
 }
 
 interface FormatLinkClickPayload {
-  data: { href: string; [key: string]: unknown }
+  // muya's getLinkInfo yields `href: null` when the rendered link carries no
+  // usable href (e.g. an unsupported protocol stripped by sanitizeHyperlink).
+  data: { href: string | null; [key: string]: unknown }
   dirname: string
 }
 
@@ -403,8 +405,7 @@ export const useEditorStore = defineStore('editor', {
 
     FORMAT_LINK_CLICK({ data, dirname }: FormatLinkClickPayload): void {
       // Check if the link starts with a #, that is a local anchor link.
-
-      if (data.href.length > 0 && data.href[0] === '#') {
+      if (data.href && data.href[0] === '#') {
         const anchorSlug = data.href.substring(1)
         if (!anchorSlug) return
 
@@ -415,6 +416,13 @@ export const useEditorStore = defineStore('editor', {
             bus.emit('scroll-to-header', item.slug)
             return
           }
+        }
+
+        // Fall back to a non-heading target: a custom `<a id="...">` (or any
+        // element with a matching id) rendered in the document.
+        const anchorElement = document.getElementById(anchorSlug)
+        if (anchorElement) {
+          bus.emit('scroll-to-anchor-element', anchorElement)
         }
 
         return
@@ -803,6 +811,11 @@ export const useEditorStore = defineStore('editor', {
       if (oldCurrentFile == null || oldCurrentFile.id !== currentFile.id) {
         const { id, markdown, cursor, history, pathname, scrollTop, blocks, muyaIndexCursor } =
           currentFile
+        // Must run while `currentFile` still points at the outgoing tab, so its
+        // flushed edit is attributed to that tab and not lost on switch (#2938).
+        if (oldCurrentFile) {
+          bus.emit('flush-active-editor')
+        }
         window.DIRNAME = pathname ? window.path.dirname(pathname) : ''
         this.currentFile = currentFile
         didUpdateCurrentFile = true
@@ -1415,7 +1428,7 @@ export const useEditorStore = defineStore('editor', {
         typeof lastEditIndex === 'number' && lastEditIndex >= 0
           ? tab.history.stack[lastEditIndex]
           : undefined
-      if (
+      const historyMarksDirty =
         (typeof lastEditIndex === 'number' &&
           lastEditIndex >= 0 &&
           editEntry !== undefined &&
@@ -1423,7 +1436,8 @@ export const useEditorStore = defineStore('editor', {
         (lastEditIndex === -1 &&
           tab.lastSavedHistoryId !== -1 &&
           tab.lastSavedHistoryId !== tab.history.lastInitIndex) // Edge Case: Undo to original content (lastEditIndex === -1) after saving means we cant use the lastEditIndex. Compare it against the lastInitIndex instead.
-      ) {
+      const isDirty = history === undefined ? markdown !== oldMarkdown : historyMarksDirty
+      if (isDirty) {
         tab.isSaved = false
         if (pathname && autoSave) {
           const options = getOptionsFromState(tab)
@@ -1435,7 +1449,7 @@ export const useEditorStore = defineStore('editor', {
             options
           })
         }
-      } else if (tab.lastSavedHistoryId !== -1) {
+      } else if (history !== undefined && tab.lastSavedHistoryId !== -1) {
         // Check here is to prevent it from overriding a restored .isSaved state
         tab.isSaved = true // An undo can trigger this
       }
@@ -1646,6 +1660,14 @@ export const useEditorStore = defineStore('editor', {
             }
             case 'add':
             case 'change': {
+              // Only the file's metadata changed on disk (e.g. a git checkout
+              // that left the content byte-identical) — there is nothing to
+              // reload and no reason to warn the user (#1861).
+              const newMarkdown = (change as unknown as FileChangePayload).data?.markdown
+              if (typeof newMarkdown === 'string' && newMarkdown === tab.markdown) {
+                break
+              }
+
               const { autoSave } = preferencesStore
               if (autoSave) {
                 if (autoSaveTimers.has(id)) {
@@ -1930,7 +1952,6 @@ const createApplicationMenuState = ({
     }
   }
 
-  // Clean up
   if (Object.getOwnPropertyNames(state.affiliation).length >= 2 && state.affiliation.p) {
     delete state.affiliation.p
   }

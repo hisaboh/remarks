@@ -1,10 +1,12 @@
 <template>
   <div>
     <div
+      v-if="showTitleBar"
       class="title-bar-editor-bg"
       :class="{ 'tabs-visible': showTabBar }"
     />
     <div
+      v-if="showTitleBar"
       class="title-bar"
       data-tauri-drag-region="deep"
       :class="[
@@ -148,6 +150,7 @@ import { storeToRefs } from 'pinia'
 import { minimizePath, restorePath, maximizePath, closePath } from '../../assets/window-controls.js'
 import { PATH_SEPARATOR } from '../../config'
 import { isOsx as isOsxPlatform } from '@/util'
+import { shouldShowInAppTitleBar } from './visibility'
 import { useEditorStore } from '@/store/editor'
 import { useI18n } from 'vue-i18n'
 import { ArrowRight } from '@element-plus/icons-vue'
@@ -223,6 +226,10 @@ const paths = computed(() => {
 
 const showCustomTitleBar = computed(() => {
   return titleBarStyle.value === 'custom' && !isOsx
+})
+
+const showTitleBar = computed(() => {
+  return shouldShowInAppTitleBar(titleBarStyle.value, isOsx)
 })
 
 watch(

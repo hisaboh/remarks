@@ -14,6 +14,21 @@
     vertical-align: middle;
 }
 
+/* Hide syntax markers as zero-size `inline` text, not `inline-block` — atomic
+   boxes create a wrap opportunity that breaks punctuation after a link onto its
+   own line (#2258 / #3025). `nowrap` stops the hidden URL's `/`,`.` from
+   wrapping. Scoped to `.mu-remove` so math/ruby/emoji previews keep inline-block. */
+.mu-hide.mu-remove,
+.mu-hide.mu-remove .mu-highlight,
+.mu-hide.mu-remove .mu-selection {
+    display: inline;
+    width: auto;
+    height: auto;
+
+    font-size: 0;
+    white-space: nowrap;
+}
+
 /* link and auto-link and reference link */
 a.mu-inline-rule,
 span.mu-inline-rule.mu-link {
@@ -97,20 +112,31 @@ code.mu-inline-rule {
 .mu-html-escape {
     position: relative;
 
-    margin-left: 1em;
+    /* `inline` (overriding the `inline-block` inherited from `.mu-hide`, an
+       atomic box the line breaks around) so an entity breaks like the character
+       it represents — a `&nbsp;` glyph (U+00A0) is non-breaking; `nowrap` keeps
+       the literal entity text together while editing. `baseline` overrides the
+       `vertical-align: middle` from `.mu-hide` so the inline glyph sits on the
+       text baseline like the character it represents. */
+    display: inline;
+
+    white-space: nowrap;
+    vertical-align: baseline;
 }
 
-.mu-html-escape::before {
+/* When the caret is outside the entity, take the literal marker text out of
+   flow so the entity shows only its `::before` glyph, at the glyph's own width
+   (no extra width from the hidden literal, no break opportunity). */
+.mu-hide.mu-html-escape[data-character] .mu-html-escape-marker {
     position: absolute;
-    top: 0;
-    left: -1em;
 
-    display: flex;
-    align-items: center;
-    justify-content: space-around;
-    width: 1em;
-    height: 100%;
+    visibility: hidden;
+}
 
+/* Render the glyph (`data-character`) inline at its natural width, so every
+   entity is exactly as wide as the character it stands for: `&nbsp;` is one
+   space, `&amp;` one ampersand, `&mdash;` one em dash — not a fixed 1em slot. */
+.mu-html-escape::before {
     color: var(--editor-color);
 
     content: attr(data-character);
@@ -143,7 +169,7 @@ code.mu-inline-rule {
 
     color: var(--editor-color);
     font-family: monospace;
-    vertical-align: bottom;
+    vertical-align: middle;
 }
 
 .mu-math > .mu-math-render,
@@ -165,6 +191,21 @@ code.mu-inline-rule {
     user-select: none;
 }
 
+/* A long inline-math formula must scroll horizontally (in the editing popup and
+   inline when hidden) instead of overflowing the editor area. */
+.mu-math > .mu-math-render {
+    max-width: calc(var(--editor-area-width, 800px) - 100px);
+    overflow: auto hidden;
+
+    scrollbar-width: thin;
+}
+
+.mu-math > .mu-math-render::-webkit-scrollbar {
+    display: block;
+    width: 3px;
+    height: 6px;
+}
+
 .mu-ruby > .mu-ruby-render {
     left: 50%;
 
@@ -179,6 +220,23 @@ div .mu-math-error,
     font-size: 14px;
     font-family: monospace;
     font-style: italic;
+}
+
+/* Inline math shows a short error label: keep it on one line in the narrow
+   popup, and let it overflow VISIBLE rather than be clipped — the default
+   `overflow: auto` on .mu-math-render both clips the label and takes the
+   inline-block's baseline from its bottom edge, lifting it off the text. */
+.mu-math > .mu-math-render.mu-math-error {
+    overflow: visible;
+
+    white-space: nowrap;
+}
+
+/* Block math shows the full KaTeX parse-error message, which can be long; wrap
+   it within the block instead of overflowing horizontally (#2220). */
+.mu-math-preview .mu-math-error {
+    white-space: normal;
+    overflow-wrap: break-word;
 }
 
 .mu-math > .mu-math-render .katex-display {

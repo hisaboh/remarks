@@ -2,13 +2,6 @@
   <div
     class="editor-wrapper"
     :class="[{ typewriter: typewriter, focus: focus, source: sourceCode }]"
-    :style="{
-      lineHeight: lineHeight,
-      fontSize: `${fontSize}px`,
-      'font-family': editorFontFamily
-        ? `${editorFontFamily}, ${defaultFontFamily}`
-        : `${defaultFontFamily}`
-    }"
     :dir="textDirection"
   >
     <div
@@ -122,7 +115,7 @@ import { exportStyledHTML, type HeaderFooterPart } from '@/util/exportHtml'
 import { applyCursor, isIndexCursor } from '@/util/cursor'
 import EditorSearch from '../search/index.vue'
 import bus from '@/bus'
-import { DEFAULT_EDITOR_FONT_FAMILY } from '@/config'
+import { DEFAULT_EDITOR_FONT_FAMILY, DEFAULT_CODE_FONT_FAMILY } from '@/config'
 import notice from '@/services/notification'
 import Printer from '@/services/printService'
 import { SpellcheckerLanguageCommand } from '@/commands'
@@ -132,7 +125,7 @@ import { moveImageToFolder, uploadImage } from '@/util/fileSystem'
 import { guessClipboardFilePath } from '@/util/clipboard'
 import { getCssForOptions, getHtmlToc, type PdfCssOptions, type HtmlTocOptions } from '@/util/pdf'
 import { resolveTocHeadingElement } from '@/util/tocNavigation'
-import { addCommonStyle, setEditorWidth, setWrapCodeBlocks } from '@/util/theme'
+import { addCommonStyle, setEditorWidth } from '@/util/theme'
 import { usePreferencesStore } from '@/store/preferences'
 import { useEditorStore } from '@/store/editor'
 import { useProjectStore } from '@/store/project'
@@ -267,6 +260,9 @@ const { projectTree } = storeToRefs(projectStore)
 
 // Component state
 const defaultFontFamily = DEFAULT_EDITOR_FONT_FAMILY
+const resolveEditorFont = (family: string): string =>
+  family ? `${family}, ${defaultFontFamily}` : defaultFontFamily
+const resolveCodeFont = (family: string): string => `${family}, ${DEFAULT_CODE_FONT_FAMILY}`
 const selectionChange = ref<unknown>(null)
 const editor = ref<MuyaInstance>(null)
 const isShowClose = ref(false)
@@ -552,13 +548,19 @@ watch(focus, (value) => {
 
 watch(fontSize, (value, oldValue) => {
   if (value !== oldValue && editor.value) {
-    editor.value.setFont({ fontSize: value })
+    editor.value.setOptions({ fontSize: value })
   }
 })
 
 watch(lineHeight, (value, oldValue) => {
   if (value !== oldValue && editor.value) {
-    editor.value.setFont({ lineHeight: value })
+    editor.value.setOptions({ lineHeight: value })
+  }
+})
+
+watch(editorFontFamily, (value, oldValue) => {
+  if (value !== oldValue && editor.value) {
+    editor.value.setOptions({ editorFontFamily: resolveEditorFont(value) })
   }
 })
 
@@ -572,7 +574,7 @@ watch(preferLooseListItem, (value, oldValue) => {
 
 watch(tabSize, (value, oldValue) => {
   if (value !== oldValue && editor.value) {
-    editor.value.setTabSize(value)
+    editor.value.setOptions({ tabSize: value })
   }
 })
 
@@ -660,8 +662,8 @@ watch(editorLineWidth, (value, oldValue) => {
 })
 
 watch(wrapCodeBlocks, (value, oldValue) => {
-  if (value !== oldValue) {
-    setWrapCodeBlocks(value)
+  if (value !== oldValue && editor.value) {
+    editor.value.setOptions({ wrapCodeBlocks: value })
   }
 })
 
@@ -714,7 +716,9 @@ watch(autoCheck, (value, oldValue) => {
 })
 
 watch(codeFontSize, (value, oldValue) => {
-  if (value !== oldValue) {
+  if (value !== oldValue && editor.value) {
+    editor.value.setOptions({ codeFontSize: value })
+    // Source-mode CodeMirror is a separate surface muya doesn't own.
     addCommonStyle({
       codeFontSize: value,
       codeFontFamily: codeFontFamily.value,
@@ -730,7 +734,9 @@ watch(codeBlockLineNumbers, (value, oldValue) => {
 })
 
 watch(codeFontFamily, (value, oldValue) => {
-  if (value !== oldValue) {
+  if (value !== oldValue && editor.value) {
+    editor.value.setOptions({ codeFontFamily: resolveCodeFont(value) })
+    // Source-mode CodeMirror is a separate surface muya doesn't own.
     addCommonStyle({
       codeFontSize: codeFontSize.value,
       codeFontFamily: value,
@@ -800,7 +806,7 @@ watch(
         // it runs before the `v-if`-gated sourceCode.vue mounts and reads
         // `props.markdown`) to commit those edits and emit `json-change` now,
         // keeping the just-typed content from disappearing (issue #8).
-        editor.value.flushPendingChanges()
+        editor.value.flush()
         editor.value.hideAllFloatTools()
         // Compute the WYSIWYG caret as a source-markdown `{ line, ch }` index
         // cursor JUST-IN-TIME, only when entering source mode (Phase G — G7),
@@ -824,9 +830,12 @@ watch(
 )
 
 // Methods
-const jumpClick = (linkInfo: { href: string }) => {
+// muya types the callback as (linkInfo: ILinkInfo | null) and href itself can
+// be null when the rendered link has no usable href (see issue #4356).
+const jumpClick = (linkInfo: { href?: string | null } | null) => {
+  if (!linkInfo) return
   const { href } = linkInfo
-  editorStore.FORMAT_LINK_CLICK({ data: { href }, dirname: window.DIRNAME })
+  editorStore.FORMAT_LINK_CLICK({ data: { href: href ?? null }, dirname: window.DIRNAME })
 }
 
 interface ImagePathSuggestion {
@@ -1044,12 +1053,20 @@ const replaceMisspelling = (payload: unknown) => {
 }
 
 const handleUndo = () => {
+  if (sourceCode.value) {
+    return
+  }
+
   if (editor.value) {
     editor.value.undo()
   }
 }
 
 const handleRedo = () => {
+  if (sourceCode.value) {
+    return
+  }
+
   if (editor.value) {
     editor.value.redo()
   }
@@ -1214,6 +1231,12 @@ const scrollToHeader = (slug: unknown) => {
   scrollElementIntoView(resolveTocHeadingElement(container, editorStore.listToc, slug))
 }
 
+// Scrolls to a non-heading in-document anchor target (e.g. a custom
+// `<a id="...">`) resolved by `FORMAT_LINK_CLICK` via `getElementById`.
+const scrollToAnchorElement = (element: unknown) => {
+  if (element instanceof Element) scrollElementIntoView(element)
+}
+
 const scrollToElement = (selector: string) => {
   // Scroll to search highlight word
   scrollElementIntoView(document.querySelector(selector))
@@ -1258,7 +1281,8 @@ const handleExport = async (options: unknown) => {
           title: htmlTitle || '',
           printOptimization: false,
           extraCss,
-          toc: htmlToc
+          toc: htmlToc,
+          dir: props.textDirection
         })
         editorStore.EXPORT({ type, content })
       } catch (err) {
@@ -1290,7 +1314,8 @@ const handleExport = async (options: unknown) => {
           toc: htmlToc,
           header,
           footer,
-          headerFooterStyled: headerFooterStyled as boolean | undefined
+          headerFooterStyled: headerFooterStyled as boolean | undefined,
+          dir: props.textDirection
         })
         printer!.renderMarkdown(html, true)
         editorStore.EXPORT({ type, pageOptions })
@@ -1315,7 +1340,8 @@ const handleExport = async (options: unknown) => {
           toc: htmlToc,
           header,
           footer,
-          headerFooterStyled: headerFooterStyled as boolean | undefined
+          headerFooterStyled: headerFooterStyled as boolean | undefined,
+          dir: props.textDirection
         })
         printer!.renderMarkdown(html, true)
         editorStore.PRINT_RESPONSE()
@@ -1623,6 +1649,10 @@ const blurEditor = () => {
   editor.value?.blur(false, true)
 }
 
+const flushActiveEditor = () => {
+  editor.value?.flush()
+}
+
 const focusEditor = () => {
   editor.value?.focus()
 }
@@ -1740,6 +1770,10 @@ onMounted(() => {
     tabSize: tabSize.value,
     fontSize: fontSize.value,
     lineHeight: lineHeight.value,
+    editorFontFamily: resolveEditorFont(editorFontFamily.value),
+    codeFontSize: codeFontSize.value,
+    codeFontFamily: resolveCodeFont(codeFontFamily.value),
+    wrapCodeBlocks: wrapCodeBlocks.value,
     codeBlockLineNumbers: codeBlockLineNumbers.value,
     listIndentation: listIndentation.value,
     frontmatterType: frontmatterType.value,
@@ -1832,6 +1866,7 @@ onMounted(() => {
   bus.on('insert-image', insertImage)
   bus.on('image-uploaded', handleUploadedImage)
   bus.on('file-changed', handleFileChange)
+  bus.on('flush-active-editor', flushActiveEditor)
   bus.on('editor-blur', blurEditor)
   bus.on('editor-focus', focusEditor)
   bus.on('copyAsRich', handleCopyPaste)
@@ -1842,6 +1877,7 @@ onMounted(() => {
   bus.on('deleteParagraph', handleParagraph)
   bus.on('insertParagraph', handleInsertParagraph)
   bus.on('scroll-to-header', scrollToHeader)
+  bus.on('scroll-to-anchor-element', scrollToAnchorElement)
   bus.on('screenshot-captured', handleScreenShot)
   bus.on('show-command-palette', handleModalOpening)
   bus.on('switch-spellchecker-language', switchSpellcheckLanguage)
@@ -1945,6 +1981,10 @@ onMounted(() => {
         // editableHeight is the lowest cursor position(till to top) that editor allowed.
         const editableHeight = container.clientHeight - 100
         animatedScrollTo(container, container.scrollTop + (y - editableHeight), 0)
+      } else if (y < 100) {
+        // Symmetric to #628: scroll up when the cursor rises above the top edge
+        // (e.g. Arrow-Up), otherwise the caret leaves the viewport (#3329).
+        animatedScrollTo(container, container.scrollTop + (y - 100), 0)
       }
     }
 
@@ -1960,7 +2000,6 @@ onMounted(() => {
 
   document.addEventListener('keyup', keyup)
 
-  setWrapCodeBlocks(wrapCodeBlocks.value)
   setEditorWidth(editorLineWidth.value)
 })
 
@@ -1980,6 +2019,7 @@ onBeforeUnmount(() => {
   bus.off('insert-image', insertImage)
   bus.off('image-uploaded', handleUploadedImage)
   bus.off('file-changed', handleFileChange)
+  bus.off('flush-active-editor', flushActiveEditor)
   bus.off('editor-blur', blurEditor)
   bus.off('editor-focus', focusEditor)
   bus.off('copyAsRich', handleCopyPaste)
@@ -1990,6 +2030,7 @@ onBeforeUnmount(() => {
   bus.off('deleteParagraph', handleParagraph)
   bus.off('insertParagraph', handleInsertParagraph)
   bus.off('scroll-to-header', scrollToHeader)
+  bus.off('scroll-to-anchor-element', scrollToAnchorElement)
   bus.off('screenshot-captured', handleScreenShot)
   bus.off('show-command-palette', handleModalOpening)
   bus.off('switch-spellchecker-language', switchSpellcheckLanguage)
@@ -2026,6 +2067,10 @@ onBeforeUnmount(() => {
 .editor-wrapper {
   height: 100%;
   position: relative;
+  /* Contain the editor's z-indexed children (e.g. the math/diagram preview
+     popups at z-index 10000) in their own stacking context so they cannot
+     paint above modal dialogs rendered outside the editor. */
+  isolation: isolate;
   flex: 1;
   color: var(--editorColor);
 }
@@ -2056,6 +2101,11 @@ onBeforeUnmount(() => {
   top: 0;
   left: 0;
   overflow: hidden;
+  /* `z-index: -1` only hides the editor visually; `document.elementsFromPoint`
+     ignores stacking, so muya's mousemove-driven float tools (front button/menu,
+     table drag/column toolbars, preview toolbar) still re-trigger over the source
+     editor. Drop the subtree from hit-testing too so they cannot (#4731). */
+  pointer-events: none;
 }
 
 .editor-component {

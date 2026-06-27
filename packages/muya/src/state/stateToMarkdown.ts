@@ -31,11 +31,14 @@ import type {
 import { deepClone } from '../utils';
 
 import logger from '../utils/logger';
+import stringWidth from '../utils/stringWidth';
 import { isAnyListState } from './types';
 
 const debug = logger('export markdown: ');
+const SETEXT_SAFE_BULLET_MARKER = '*';
+
 function escapeText(str: string) {
-    return str.replace(/([^\\])\|/g, '$1\\|');
+    return str.replace(/(?<!\\)\|/g, '\\|');
 }
 
 export interface IExportMarkdownOptions {
@@ -94,6 +97,7 @@ export default class ExportMarkdown {
         const result: string[] = [];
         // helper for CommonMark 264
         let lastListBullet = '';
+        let previousState: TState | undefined;
 
         for (const state of states) {
             if (
@@ -105,12 +109,19 @@ export default class ExportMarkdown {
             }
 
             if (isAnyListState(state)) {
+                const markerOverride = !this._isLooseParentList
+                    && previousState?.name === 'paragraph'
+                    && previousState.text.trim() !== ''
+                    && this._startsWithEmptyDashBulletItem(state)
+                    ? SETEXT_SAFE_BULLET_MARKER
+                    : undefined;
                 lastListBullet = this._serializeListBlock(
                     state,
                     result,
                     indent,
                     listIndent,
                     lastListBullet,
+                    markerOverride,
                 );
             }
             else if (state.name === 'list-item' || state.name === 'task-list-item') {
@@ -119,6 +130,8 @@ export default class ExportMarkdown {
             else {
                 this._serializeSimpleBlock(state, result, indent);
             }
+
+            previousState = state;
         }
 
         return result.join('');
@@ -133,8 +146,12 @@ export default class ExportMarkdown {
             case 'paragraph':
                 // An authored empty line: exactly one newline — the block
                 // separator line doubles as its content, so blank-line runs
-                // round-trip without growing.
-                if (state.text === '') {
+                // round-trip without growing. Restricted to the TOP LEVEL
+                // (`_listType` empty): inside a list item an empty paragraph IS
+                // the item's own content, so fall through to the normal text
+                // path and let upstream's empty-list-item handling emit `- \n`
+                // (#4696) instead of collapsing the marker.
+                if (state.text === '' && this._listType.length === 0) {
                     this._insertLineBreak(result, indent);
                     // A leading/lone empty paragraph has no preceding block to
                     // supply the separator newline, so emit it explicitly —
@@ -214,10 +231,13 @@ export default class ExportMarkdown {
         indent: string,
         listIndent: string,
         lastListBullet: string,
+        markerOverride?: string,
     ): string {
         let insertNewLine = this._isLooseParentList;
         this._isLooseParentList = true;
-        const { meta } = state;
+        const meta = deepClone(state.meta);
+        if (markerOverride && 'marker' in meta)
+            meta.marker = markerOverride;
 
         // Start a new list without separation due changing the bullet or ordered list delimiter starts a new list.
         const bulletMarkerOrDelimiter
@@ -229,11 +249,27 @@ export default class ExportMarkdown {
         if (insertNewLine)
             this._insertLineBreak(result, indent);
 
-        this._listType.push(deepClone(meta));
+        this._listType.push(meta);
         result.push(this._serializeList(state, indent, listIndent));
         this._listType.pop();
 
         return bulletMarkerOrDelimiter;
+    }
+
+    private _startsWithEmptyDashBulletItem(
+        state: IOrderListState | IBulletListState | ITaskListState,
+    ) {
+        if (state.name !== 'bullet-list' || state.meta.marker !== '-')
+            return false;
+
+        const firstItem = state.children[0];
+        if (!firstItem)
+            return false;
+        if (firstItem.children.length === 0)
+            return true;
+
+        const firstChild = firstItem.children[0];
+        return firstChild.name === 'paragraph' && firstChild.text.trim() === '';
     }
 
     private _serializeListItemBlock(
@@ -342,11 +378,12 @@ export default class ExportMarkdown {
         const fenceInfo = info ?? lang;
 
         if (type === 'fenced') {
-            result.push(`${indent}${fenceInfo ? `\`\`\`${fenceInfo}\n` : '```\n'}`);
+            const fence = '`'.repeat(this._codeFenceLength(text, meta.fenceLength));
+            result.push(`${indent}${fenceInfo ? `${fence}${fenceInfo}\n` : `${fence}\n`}`);
             textList.forEach((text) => {
                 result.push(`${indent}${text}\n`);
             });
-            result.push(`${indent}\`\`\`\n`);
+            result.push(`${indent}${fence}\n`);
         }
         else {
             textList.forEach((text) => {
@@ -355,6 +392,20 @@ export default class ExportMarkdown {
         }
 
         return result.join('');
+    }
+
+    // The opening fence must be longer than any all-backtick line in the body
+    // (else that line closes the block early), at least as long as the original
+    // fence, and never shorter than the markdown minimum of 3.
+    private _codeFenceLength(text: string, stored?: number): number {
+        let longestInterior = 0;
+        for (const line of text.split('\n')) {
+            const trimmed = line.trim();
+            if (/^`+$/.test(trimmed))
+                longestInterior = Math.max(longestInterior, trimmed.length);
+        }
+
+        return Math.max(3, stored ?? 3, longestInterior + 1);
     }
 
     private _serializeHtmlBlock(state: IHtmlBlockState, indent: string) {
@@ -451,7 +502,7 @@ export default class ExportMarkdown {
             for (j = 0; j < cells; j++) {
                 columnWidth[j].width = Math.max(
                     columnWidth[j].width,
-                    tableData[i][j].length + 2,
+                    stringWidth(tableData[i][j]) + 2,
                 ); // add 2, because have two space around text
             }
         }
@@ -463,9 +514,12 @@ export default class ExportMarkdown {
                     r
                         .slice(0, columnWidth.length)
                         .map((cell, j) => {
-                            const raw = ` ${cell + ' '.repeat(columnWidth[j].width)}`;
+                            // Pad by visual column width, not code-unit length,
+                            // so combining marks and wide characters stay
+                            // aligned (#1983). One leading space + cell + fill.
+                            const fill = columnWidth[j].width - 1 - stringWidth(cell);
 
-                            return raw.substring(0, columnWidth[j].width);
+                            return ` ${cell}${' '.repeat(Math.max(fill, 0))}`;
                         })
                         .join('|')
                 }|`;
@@ -577,6 +631,9 @@ export default class ExportMarkdown {
 
         if (name === 'task-list-item')
             itemMarker += state.meta.checked ? '[x] ' : '[ ] ';
+
+        if (!children.length)
+            return `${indent}${itemMarker}\n`;
 
         result.push(`${indent}${itemMarker}`);
         result.push(

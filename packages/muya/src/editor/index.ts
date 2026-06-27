@@ -63,6 +63,7 @@ type BlockNode = {
     remove?: (source: string) => void;
     replaceWith?: (newBlock: BlockNode, source: string) => void;
     insertBefore?: (newBlock: BlockNode, ref: BlockNode, source: string) => void;
+    append?: (newBlock: BlockNode, source: string) => void;
     update?: (value?: unknown, source?: string) => void;
     blockName?: string;
     align?: string;
@@ -179,8 +180,12 @@ function drop(root: BlockNode, descent: JSONOpList, muya: Muya): BlockNode {
         if (typeof key === 'number') {
             const insertedState = comp.i as { name: string };
             const newBlock = ScrollPage.loadBlock(insertedState.name).create(muya, insertedState) as BlockNode;
-            if (cur && ref && newBlock)
-                cur.insertBefore?.(newBlock, ref, 'api');
+            if (cur && newBlock) {
+                if (ref)
+                    cur.insertBefore?.(newBlock, ref, 'api');
+                else
+                    cur.append?.(newBlock, 'api');
+            }
 
             subDoc = newBlock;
         }
@@ -533,11 +538,21 @@ export class Editor {
         if (operations === null)
             return;
 
-        const snapshot = pick(this.scrollPage as BlockNode, operations);
+        try {
+            const snapshot = pick(this.scrollPage as BlockNode, operations);
 
-        drop(snapshot, operations, muya);
+            drop(snapshot, operations, muya);
 
-        this._restoreSelection(selection);
+            this._restoreSelection(selection);
+        }
+        catch (error) {
+            // The incremental walk left the live tree half-applied (pick removed
+            // blocks drop never re-inserted). The json state is authoritative and
+            // already up to date — rebuild from it instead of leaving an empty doc.
+            debug.error(`updateContents incremental apply failed; rebuilding from state: ${String(error)}`);
+            this.scrollPage!.updateState(this.jsonState.getState());
+            this._restoreSelection(selection, true);
+        }
     }
 
     private _restoreSelection(selection: Nullable<IHistorySelection>, treeRebuilt = false) {
@@ -573,13 +588,15 @@ export class Editor {
             return;
         }
 
-        // Incremental (updateContents) path: blocks are still attached. Clone the
-        // paths so `queryBlock(path)` can't drain the caller's arrays — notably
-        // the selection object stored in the undo stack.
-        const anchorBlock = anchor.block ?? this.scrollPage?.queryBlock([...anchor.path]);
-        const focusBlock = focus.block ?? this.scrollPage?.queryBlock([...focus.path]);
-        if (!anchorBlock || !anchorBlock.isContent() || !focusBlock || !focusBlock.isContent())
+        // Incremental (updateContents) path. Clone the paths so
+        // `queryBlock(path)` can't drain the caller's arrays — notably the
+        // selection object stored in the undo stack.
+        const anchorBlock = this.scrollPage?.queryBlock([...anchor.path]);
+        const focusBlock = this.scrollPage?.queryBlock([...focus.path]);
+        if (!anchorBlock || !anchorBlock.isContent() || !focusBlock || !focusBlock.isContent()) {
+            this.focus();
             return;
+        }
 
         this.selection.setSelection(
             { offset: anchor.offset, block: anchorBlock, path: [...anchor.path] },
@@ -613,6 +630,7 @@ export class Editor {
 
         this.scrollPage!.updateState(state);
         this.history.clear();
+        this.searchModule.reset();
 
         if (autoFocus)
             this.focus();

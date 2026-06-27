@@ -95,7 +95,7 @@ function extractWord(
 
 function shouldRemoveClosingChar(
     inputChar: string,
-    prePreInputChar: string,
+    preInputChar: string,
     options: { autoPairBracket: boolean; autoPairMarkdownSyntax: boolean; autoPairQuote: boolean },
 ) {
     const { autoPairBracket, autoPairMarkdownSyntax, autoPairQuote } = options;
@@ -107,7 +107,7 @@ function shouldRemoveClosingChar(
         || (autoPairMarkdownSyntax && /\$/.test(inputChar))
         || (autoPairMarkdownSyntax
             && /[*$`~_]/.test(inputChar)
-            && /[_*~]/.test(prePreInputChar))
+            && preInputChar !== inputChar)
     );
 }
 
@@ -147,6 +147,33 @@ function shouldInsertClosingPair(
             && !/[a-z0-9]/i.test(preInputChar)
             && /[*$`~_]/.test(inputChar))
     );
+}
+
+function selectionPairForKey(
+    key: string,
+    options: {
+        autoPairBracket: boolean;
+        autoPairMarkdownSyntax: boolean;
+        autoPairQuote: boolean;
+    },
+    type: string,
+) {
+    if (key.length !== 1)
+        return null;
+
+    const close = key === '`' ? '`' : BRACKET_HASH[key];
+    if (!close)
+        return null;
+
+    const { autoPairBracket, autoPairMarkdownSyntax, autoPairQuote } = options;
+    if (autoPairQuote && /['"]/.test(key))
+        return { open: key, close };
+    if (autoPairBracket && /[{[(]/.test(key))
+        return { open: key, close };
+    if (type === 'format' && autoPairMarkdownSyntax && /[*$~_`]/.test(key))
+        return { open: key, close };
+
+    return null;
 }
 
 interface IAutoPairCollapsedContext {
@@ -207,7 +234,6 @@ function collapsedInputAutoPair(
     const { offset } = start;
     const inputChar = text.charAt(+offset - 1);
     const preInputChar = text.charAt(+offset - 2);
-    const prePreInputChar = text.charAt(+offset - 3);
     const postInputChar = text.charAt(+offset);
     let needRender = false;
 
@@ -217,7 +243,7 @@ function collapsedInputAutoPair(
     if (
         !event.inputType.includes('delete')
         && inputChar === postInputChar
-        && shouldRemoveClosingChar(inputChar, prePreInputChar, options)
+        && shouldRemoveClosingChar(inputChar, preInputChar, options)
     ) {
         needRender = true;
         text = text.substring(0, offset) + text.substring(offset + 1);
@@ -319,6 +345,10 @@ class Content extends TreeNode {
 
     protected get inlineRenderer() {
         return this.muya.editor.inlineRenderer;
+    }
+
+    protected get autoPairType() {
+        return this.blockName;
     }
 
     get path(): TBlockPath {
@@ -446,30 +476,47 @@ class Content extends TreeNode {
         const { muya } = this;
         let cursorBlock = null;
         let offset = 0;
+        // In RTL the physical Left/Right arrows are visually mirrored, so the
+        // cross-block boundary keys swap (offset 0 is the visual right end).
+        const isRtl = this.domNode?.closest('[dir]')?.getAttribute('dir') === 'rtl';
+        const prevKey = isRtl ? EVENT_KEYS.ArrowRight : EVENT_KEYS.ArrowLeft;
+        const nextKey = isRtl ? EVENT_KEYS.ArrowLeft : EVENT_KEYS.ArrowRight;
 
         if (
             event.key === EVENT_KEYS.ArrowUp
-            || (event.key === EVENT_KEYS.ArrowLeft && start.offset === 0)
+            || (event.key === prevKey && start.offset === 0)
         ) {
             event.preventDefault();
             event.stopPropagation();
 
-            if (!previousContentBlock)
+            if (!previousContentBlock) {
+                // First block, no previous: ArrowUp moves the caret to the
+                // start of the line (offset 0) instead of staying put (#3193).
+                // A boundary ArrowLeft has nowhere to go, so leave it. Skip the
+                // re-set when the caret is already at offset 0, so a no-op
+                // ArrowUp doesn't emit a spurious selection-change or re-render.
+                if (event.key === EVENT_KEYS.ArrowUp && start.offset !== 0)
+                    this.setCursor(0, 0, true);
+
                 return;
+            }
 
             cursorBlock = previousContentBlock;
             offset = previousContentBlock.text.length;
         }
         else if (
             event.key === EVENT_KEYS.ArrowDown
-            || (event.key === EVENT_KEYS.ArrowRight && start.offset === this.text.length)
+            || (event.key === nextKey && start.offset === this.text.length)
         ) {
             event.preventDefault();
             event.stopPropagation();
             if (nextContentBlock) {
                 cursorBlock = nextContentBlock;
             }
-            else {
+            // Only append a trailing paragraph when the last block has content.
+            // Otherwise ArrowDown in an already-empty last paragraph would keep
+            // creating empty paragraphs on every keypress (#3520).
+            else if (this.text.length > 0) {
                 const newNodeState = {
                     name: 'paragraph',
                     text: '',
@@ -481,7 +528,8 @@ class Content extends TreeNode {
                 this.scrollPage?.append(newNode, 'user');
                 cursorBlock = newNode.children.head;
             }
-            offset = adjustOffset(0, cursorBlock, event);
+            if (cursorBlock)
+                offset = adjustOffset(0, cursorBlock, event);
         }
 
         if (cursorBlock) {
@@ -605,7 +653,7 @@ class Content extends TreeNode {
     protected insertTab() {
         const { muya, text } = this;
         const { tabSize } = muya.options;
-        const tabCharacter = String.fromCharCode(160).repeat(tabSize);
+        const tabCharacter = String.fromCharCode(32).repeat(tabSize);
         const { start, end } = this.getCursor()!;
 
         if (this.isCollapsed) {
@@ -675,6 +723,9 @@ class Content extends TreeNode {
         if (this.muya.ui.handleContentKeydown(event))
             return;
 
+        if (this._wrapSelectionWithAutoPair(event))
+            return;
+
         switch (event.key) {
             case EVENT_KEYS.Backspace:
                 this.backspaceHandler(event);
@@ -703,12 +754,52 @@ class Content extends TreeNode {
                 break;
 
             case EVENT_KEYS.Tab:
-                this.tabHandler(event);
+                if (!this.isComposed)
+                    this.tabHandler(event);
+
                 break;
             default:
                 break;
         }
     };
+
+    private _wrapSelectionWithAutoPair(event: KeyboardEvent) {
+        if (
+            this.isComposed
+            || event.defaultPrevented
+            || event.ctrlKey
+            || event.metaKey
+            || event.altKey
+        ) {
+            return false;
+        }
+
+        const cursor = this.getCursor();
+        if (!cursor || cursor.start.offset === cursor.end.offset)
+            return false;
+
+        const pair = selectionPairForKey(event.key, this.muya.options, this.autoPairType);
+        if (!pair)
+            return false;
+
+        event.preventDefault();
+        event.stopPropagation();
+        this.muya.editor.history.markInputBoundary('insertText', event.key);
+
+        const { start, end } = cursor;
+        const selectedText = this.text.substring(start.offset, end.offset);
+        const wrappedText = `${pair.open}${selectedText}${pair.close}`;
+        this.text
+            = this.text.substring(0, start.offset)
+                + wrappedText
+                + this.text.substring(end.offset);
+
+        const selectionStart = start.offset + pair.open.length;
+        const selectionEnd = selectionStart + selectedText.length;
+        this.setCursor(selectionStart, selectionEnd, true);
+
+        return true;
+    }
 
     blurHandler() {
         this.scrollPage?.handleBlurFromContent(this);

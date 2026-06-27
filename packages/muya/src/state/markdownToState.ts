@@ -106,7 +106,10 @@ export class MarkdownToState {
                 // Fix #1735 the blockquote maybe empty. like bellow:
                 // >
                 // bar
-                if (parentList[0].length === 0 && token.tokenType === 'blockquote') {
+                if (
+                    parentList[0].length === 0
+                    && (token.tokenType === 'blockquote' || token.tokenType === 'list-item')
+                ) {
                     state = {
                         name: 'paragraph' as const,
                         text: '',
@@ -291,9 +294,13 @@ export class MarkdownToState {
             }
 
             case 'code': {
-                const { codeBlockStyle, text, lang: infoString = '' } = token;
+                const { codeBlockStyle, text, lang: infoString = '', raw = '' } = token;
+                // marked >=17 appends a trailing newline to indented code text
+                // (fenced text has none); strip it so indented blocks round-trip.
+                const codeText = codeBlockStyle === 'indented' ? text.replace(/\n$/, '') : text;
+                const fenceLength = /^ {0,3}([`~]{3,})/.exec(raw)?.[1].length;
                 parentList[0].push(
-                    this._buildCodeState(text, infoString, codeBlockStyle, trimUnnecessaryCodeBlockEmptyLines),
+                    this._buildCodeState(codeText, infoString, codeBlockStyle, trimUnnecessaryCodeBlockEmptyLines, fenceLength),
                 );
                 break;
             }
@@ -443,6 +450,7 @@ export class MarkdownToState {
         infoString: string,
         codeBlockStyle: 'indented' | undefined,
         trimUnnecessaryCodeBlockEmptyLines: boolean,
+        fenceLength?: number,
     ): TState {
         // GH#697, markedjs#1387 — strip everything past the first
         // whitespace; `\S*` matches the empty string so this is
@@ -488,6 +496,7 @@ export class MarkdownToState {
                 type: isFenced ? 'fenced' : 'indented',
                 lang,
                 ...(isFenced && info !== lang ? { info } : {}),
+                ...(isFenced && fenceLength && fenceLength > 3 ? { fenceLength } : {}),
             },
             text: value,
         };
